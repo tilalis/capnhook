@@ -49,6 +49,7 @@ func NewHandlerSet() *BotHandlerSet {
 
 func (bhs *BotHandlerSet) BotOptions() []bot.Option {
 	return []bot.Option{
+		bot.WithMiddlewares(usersWhitelist),
 		bot.WithDefaultHandler(bhs.defaultHandler),
 		bot.WithCallbackQueryDataHandler("id", bot.MatchTypePrefix, bhs.showTorrentInfoCallbackHandler),
 		bot.WithCallbackQueryDataHandler("download", bot.MatchTypePrefix, bhs.downloadCallbackHandler),
