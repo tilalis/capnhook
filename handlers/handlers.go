@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -15,12 +18,22 @@ import (
 )
 
 type BotHandlerSet struct {
-	piratebay *piratebay.Piratebay
+	piratebay    *piratebay.Piratebay
 	transmission *transmission.TransmissionClient
-	cache     *sieve.Sieve[string, *piratebay.Torrent]
+	cache        *sieve.Sieve[string, *piratebay.Torrent]
 }
 
-func New() *BotHandlerSet {
+func NewBot() (*bot.Bot, error) {
+	handlerSet := NewHandlerSet()
+	b, err := bot.New(os.Getenv("TELEGRAM_BOT_TOKEN"), handlerSet.BotOptions()...)
+	if err != nil {
+		return nil, err
+	}
+	handlerSet.RegisterHandlers(b)
+	return b, nil
+}
+
+func NewHandlerSet() *BotHandlerSet {
 	transmission, err := transmission.NewTransmissionClient("")
 
 	if err != nil {
@@ -28,18 +41,26 @@ func New() *BotHandlerSet {
 	}
 
 	return &BotHandlerSet{
-		piratebay: piratebay.NewDefault(),
+		piratebay:    piratebay.NewDefault(),
 		transmission: transmission,
-		cache:     sieve.New[string, *piratebay.Torrent](16, 0),
+		cache:        sieve.New[string, *piratebay.Torrent](16, 0),
 	}
 }
 
 func (bhs *BotHandlerSet) BotOptions() []bot.Option {
 	return []bot.Option{
 		bot.WithDefaultHandler(bhs.defaultHandler),
-		bot.WithCallbackQueryDataHandler("id", bot.MatchTypePrefix, bhs.selectTorrentHandler),
+		bot.WithCallbackQueryDataHandler("id", bot.MatchTypePrefix, bhs.showTorrentInfoCallbackHandler),
 		bot.WithCallbackQueryDataHandler("download", bot.MatchTypePrefix, bhs.downloadCallbackHandler),
+		bot.WithCallbackQueryDataHandler("torrent", bot.MatchTypePrefix, bhs.manageTorrentCallbackHandler),
+		bot.WithCallbackQueryDataHandler("deletetorrent", bot.MatchTypePrefix, bhs.deleteTorrentCallbackHandler),
 	}
+}
+
+func (bhs *BotHandlerSet) RegisterHandlers(b *bot.Bot) {
+	b.RegisterHandler(bot.HandlerTypeMessageText, "info", bot.MatchTypeCommandStartOnly, bhs.infoCommandHandler)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "inprogress", bot.MatchTypeCommandStartOnly, bhs.infoCommandHandler)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "space", bot.MatchTypeCommandStartOnly, bhs.spaceCommandHandler)
 }
 
 func (bhs *BotHandlerSet) defaultHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -99,7 +120,227 @@ func (bhs *BotHandlerSet) defaultHandler(ctx context.Context, b *bot.Bot, update
 	}
 }
 
-func (bhs *BotHandlerSet) selectTorrentHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (bhs *BotHandlerSet) spaceCommandHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+	freeSpace, _, err := bhs.transmission.FreeSpace(ctx, "/home/tilalis/Plex")
+
+	if err != nil {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.CallbackQuery.Message.Message.Chat.ID,
+			Text:   err.Error(),
+		})
+		return
+	}
+
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID: update.Message.Chat.ID,
+		Text:   fmt.Sprintf("💾 Free Space: %s", freeSpace.GiBString()),
+	})
+}
+
+func (bhs *BotHandlerSet) infoCommandHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+	torrents, err := bhs.transmission.TorrentGetAll(ctx)
+
+	if err != nil {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.CallbackQuery.Message.Message.Chat.ID,
+			Text:   "Something went wrong :(",
+		})
+		return
+	}
+
+	inProgress := strings.HasPrefix(update.Message.Text, "/inprogress")
+
+	var responseText strings.Builder
+	var inlineKeyboard [][]models.InlineKeyboardButton
+
+	for i, torrent := range torrents {
+		var status string
+		percentDone := *torrent.PercentDone
+		if percentDone == 1.0 {
+			status = "✅"
+			if inProgress {
+				continue
+			}
+		} else {
+			status = "🔄"
+		}
+
+		var etaHours float64
+
+		if rawEta := *torrent.ETA; rawEta > 0 {
+			eta := time.Duration(*torrent.ETA) * time.Second
+			etaHours = eta.Hours()
+		} else {
+			etaHours = 0.0
+		}
+
+		name := *torrent.Name
+		sizeWhenDone := *torrent.SizeWhenDone
+
+		fmt.Fprintf(
+			&responseText,
+			"%d: %s %s <code>(%.0f%%, %.2fh, %s)</code>\n",
+			i,
+			status,
+			name,
+			percentDone*100.0,
+			etaHours,
+			sizeWhenDone.GiBString(),
+		)
+
+		inlineKeyboard = append(inlineKeyboard, []models.InlineKeyboardButton{
+			{Text: fmt.Sprintf("%d: %s", i, name), CallbackData: fmt.Sprintf("torrent:%d", *torrent.ID)},
+		})
+	}
+
+	var message string
+	var replyMarkup models.ReplyMarkup
+
+	if responseText.Len() == 0 {
+		message = "<i>No downloads in progress</i>"
+		replyMarkup = nil
+	} else {
+		message = responseText.String()
+		replyMarkup = &models.InlineKeyboardMarkup{
+			InlineKeyboard: inlineKeyboard,
+		}
+	}
+
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:      update.Message.Chat.ID,
+		Text:        message,
+		ParseMode:   models.ParseModeHTML,
+		ReplyMarkup: replyMarkup,
+	})
+}
+
+func (bhs *BotHandlerSet) deleteTorrentCallbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+	b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+		CallbackQueryID: update.CallbackQuery.ID,
+		ShowAlert:       false,
+	})
+
+	b.DeleteMessage(ctx, &bot.DeleteMessageParams{
+		ChatID:    update.CallbackQuery.Message.Message.Chat.ID,
+		MessageID: update.CallbackQuery.Message.Message.ID,
+	})
+
+	if strings.HasPrefix(update.CallbackQuery.Data, "deletetorrentback") {
+		update.Message = update.CallbackQuery.Message.Message
+		bhs.infoCommandHandler(ctx, b, update)
+		return
+	}
+
+	data := strings.SplitN(update.CallbackQuery.Data, ":", 2)
+
+	if len(data) < 2 {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.CallbackQuery.Message.Message.Chat.ID,
+			Text:   "Something went wrong :(",
+		})
+		return
+	}
+
+	id, err := strconv.Atoi(data[1])
+
+	if err != nil {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.CallbackQuery.Message.Message.Chat.ID,
+			Text:   err.Error(),
+		})
+		return
+	}
+
+	torrent, err := bhs.transmission.TorrentGetByID(ctx, int64(id))
+
+	if err != nil {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.CallbackQuery.Message.Message.Chat.ID,
+			Text:   err.Error(),
+		})
+		return
+	}
+
+	err = bhs.transmission.TorrentRemove(
+		ctx,
+		transmissionrpc.TorrentRemovePayload{
+			IDs:             []int64{*torrent.ID},
+			DeleteLocalData: true,
+		},
+	)
+
+	if err != nil {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.CallbackQuery.Message.Message.Chat.ID,
+			Text:   err.Error(),
+		})
+		return
+	}
+
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:    update.CallbackQuery.Message.Message.Chat.ID,
+		Text:      fmt.Sprintf("🗑️ Deleted with all files: %s", *torrent.Name),
+		ParseMode: models.ParseModeHTML,
+	})
+}
+
+func (bhs *BotHandlerSet) manageTorrentCallbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+	b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+		CallbackQueryID: update.CallbackQuery.ID,
+		ShowAlert:       false,
+	})
+
+	b.DeleteMessage(ctx, &bot.DeleteMessageParams{
+		ChatID:    update.CallbackQuery.Message.Message.Chat.ID,
+		MessageID: update.CallbackQuery.Message.Message.ID,
+	})
+
+	data := strings.SplitN(update.CallbackQuery.Data, ":", 2)
+
+	if len(data) < 2 {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.CallbackQuery.Message.Message.Chat.ID,
+			Text:   "Something went wrong :(",
+		})
+		return
+	}
+
+	id, err := strconv.Atoi(data[1])
+
+	if err != nil {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.CallbackQuery.Message.Message.Chat.ID,
+			Text:   err.Error(),
+		})
+		return
+	}
+
+	torrent, err := bhs.transmission.TorrentGetByID(ctx, int64(id))
+
+	if err != nil {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.CallbackQuery.Message.Message.Chat.ID,
+			Text:   err.Error(),
+		})
+		return
+	}
+
+	sizeWhenDone := *torrent.SizeWhenDone
+
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:    update.CallbackQuery.Message.Message.Chat.ID,
+		Text:      fmt.Sprintf("%s <code>(%.0f%%, %s)</code>", *torrent.Name, *torrent.PercentDone*100.0, sizeWhenDone.GiBString()),
+		ParseMode: models.ParseModeHTML,
+		ReplyMarkup: &models.InlineKeyboardMarkup{
+			InlineKeyboard: [][]models.InlineKeyboardButton{
+				{{Text: "🚫 Delete with all files", CallbackData: fmt.Sprintf("deletetorrent:%d", *torrent.ID)}},
+				{{Text: "⬅️ Back", CallbackData: "deletetorrentback"}},
+			},
+		},
+	})
+}
+
+func (bhs *BotHandlerSet) showTorrentInfoCallbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	// answering callback query first to let Telegram know that we received the callback query,
 	b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
 		CallbackQueryID: update.CallbackQuery.ID,
@@ -190,7 +431,7 @@ func (bhs *BotHandlerSet) downloadCallbackHandler(ctx context.Context, b *bot.Bo
 	magnet := torrent.MagnetLink()
 
 	_, err = bhs.transmission.TorrentAdd(ctx, transmissionrpc.TorrentAddPayload{
-		Filename: &magnet,
+		Filename:    &magnet,
 		DownloadDir: &downloadDir,
 	})
 
@@ -203,10 +444,10 @@ func (bhs *BotHandlerSet) downloadCallbackHandler(ctx context.Context, b *bot.Bo
 	}
 
 	b.SendMessage(
-		ctx, 
+		ctx,
 		&bot.SendMessageParams{
-			ChatID: update.CallbackQuery.Message.Message.Chat.ID,
-			Text: fmt.Sprintf("📥 <i>Downloading %s to %s</i>", torrent.Name, downloadDir),
+			ChatID:    update.CallbackQuery.Message.Message.Chat.ID,
+			Text:      fmt.Sprintf("📥 <i>Downloading %s to %s</i>", torrent.Name, downloadDir),
 			ParseMode: models.ParseModeHTML,
 		},
 	)
@@ -218,7 +459,7 @@ func (bhs *BotHandlerSet) findTorrent(id string) (torrent *piratebay.Torrent, er
 	if !ok {
 		torrent, err = bhs.piratebay.Find(id)
 		if err != nil {
-			return 
+			return
 		}
 		bhs.cache.Set(id, torrent)
 	}
