@@ -2,53 +2,73 @@ package piratebay
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"time"
 )
 
 type Piratebay struct {
-	Url string
+	apiUrl  string
+	siteUrl string
 }
 
-type Torrent struct {
-	Id 		 string `json:"id"`
-	Name     string `json:"name"`
-	InfoHash string `json:"info_hash"`
-	Size     string `json:"size"`
-	NumFiles string `json:"num_files"`
-	Username string `json:"username"`
-	Added    string `json:"added"`
-}
-
-func (t Torrent) SizeGB() float64 {
-	sizeBytes, err := strconv.Atoi(t.Size)
-
-	if err != nil {
-		return 0.0
+func New(apiUrl string, siteUrl string) *Piratebay {
+	if apiUrl == "" {
+		apiUrl = "https://apibay.org"
+	}
+	if siteUrl == "" {
+		siteUrl = "https://thepiratebay.org"
 	}
 
-	return float64(sizeBytes) / float64(1 << 30)
-}
-
-func (t Torrent) AddedTime() time.Time {
-	addedTs, err := strconv.Atoi(t.Added)
-	if err != nil {
-		return time.Time{}
+	return &Piratebay{
+		apiUrl:  apiUrl,
+		siteUrl: siteUrl,
 	}
-	return time.Unix(int64(addedTs), 0)
 }
 
-const trackers string = "&tr=udp://tracker.opentrackr.org:1337&tr=udp://open.stealth.si:80/announce&tr=udp://tracker.torrent.eu.org:451/announce&tr=udp://tracker.bittor.pw:1337/announce&tr=udp://public.popcorn-tracker.org:6969/announce&tr=udp://tracker.dler.org:6969/announce&tr=udp://exodus.desync.com:6969&tr=udp://open.demonii.com:1337/announce&tr=udp://glotorrents.pw:6969/announce&tr=udp://tracker.coppersurfer.tk:6969&tr=udp://torrent.gresille.org:80/announce&tr=udp://p4p.arenabg.com:1337&tr=udp://tracker.internetwarriors.net:1337"
+func NewDefault() *Piratebay {
+	return New("", "")
+}
 
-func (t Torrent) MagnetLink() string {
-	return "magnet:?xt=urn:btih:" + t.InfoHash + "&dn=" + t.Name + trackers
+func (p *Piratebay) Find(id string) (*Torrent, error) {
+	body, err := p.request(fmt.Sprintf("t.php?id=%s", url.QueryEscape(id)))
+
+	if err != nil {
+		return nil, nil
+	}
+
+	var torrent Torrent
+
+	if err := json.Unmarshal(body, &torrent); err != nil {
+		return nil, err
+	}
+
+	return &torrent, nil
 }
 
 func (p *Piratebay) Search(query string) ([]Torrent, error) {
-	url := p.Url + "/q.php?q=" + url.QueryEscape(query)
+	body, err := p.request(fmt.Sprintf("q.php?q=%s", url.QueryEscape(query)))
+
+	if err != nil {
+		return nil, err
+	}
+
+	var torrents []Torrent
+	if err := json.Unmarshal(body, &torrents); err != nil {
+		return nil, err
+	}
+
+	return torrents, nil
+}
+
+func (p *Piratebay) SiteUrl(t *Torrent) string {
+	return fmt.Sprintf("%s/description.php?id=%s", p.siteUrl, t.Id)
+}
+
+func (p *Piratebay) request(endpoint string) ([]byte, error) {
+	url := fmt.Sprintf("%s/%s", p.apiUrl, endpoint)
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
@@ -73,19 +93,5 @@ func (p *Piratebay) Search(query string) ([]Torrent, error) {
 		return nil, err
 	}
 
-	var torrents []Torrent
-	if err := json.Unmarshal(body, &torrents); err != nil {
-		return nil, err
-	}
-
-	return torrents, nil
-}
-
-func New(url string) *Piratebay {
-	if url == "" {
-		url = "https://apibay.org"
-	}
-	return &Piratebay{
-		Url: url,
-	}
+	return body, nil
 }

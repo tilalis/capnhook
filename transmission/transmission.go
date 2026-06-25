@@ -1,4 +1,4 @@
-package torrents
+package transmission 
 
 import (
 	"context"
