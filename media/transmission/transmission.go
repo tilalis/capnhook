@@ -1,27 +1,31 @@
-package transmission 
+package transmission
 
 import (
 	"context"
+	"errors"
 	url_ "net/url"
 
 	"github.com/hekmon/transmissionrpc/v3"
 )
 
-type TransmissionClient struct {
+type Transmission struct {
 	*transmissionrpc.Client
 }
 
-func (c *TransmissionClient) TorrentGetByID(ctx context.Context, id int64) (transmissionrpc.Torrent, error) {
+func (c *Transmission) TorrentGetByID(ctx context.Context, id int64) (transmissionrpc.Torrent, error) {
 	torrents, err := c.TorrentGetAllFor(ctx, []int64{id})
 	if err != nil {
 		return transmissionrpc.Torrent{}, err
+	}
+	if len(torrents) == 0 {
+		return transmissionrpc.Torrent{}, errors.New("No torrents found")
 	}
 	return torrents[0], nil
 }
 
 const defaultUrl = "http://192.168.1.42:9091/transmission/rpc"
 
-func NewTransmissionClient(url string) (*TransmissionClient, error) {
+func NewTransmissionClient(url string) (*Transmission, error) {
 	if url == "" {
 		url = defaultUrl
 	}
@@ -35,7 +39,7 @@ func NewTransmissionClient(url string) (*TransmissionClient, error) {
 		return nil, err
 	}
 
-	return &TransmissionClient{
+	return &Transmission{
 		client,
 	}, nil
 }

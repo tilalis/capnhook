@@ -36,7 +36,7 @@ func (p *Piratebay) Find(id string) (*Torrent, error) {
 	body, err := p.request(fmt.Sprintf("t.php?id=%s", url.QueryEscape(id)))
 
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 
 	var torrent Torrent
@@ -64,7 +64,7 @@ func (p *Piratebay) Search(query string) ([]Torrent, error) {
 }
 
 func (p *Piratebay) SiteUrl(t *Torrent) string {
-	return fmt.Sprintf("%s/description.php?id=%s", p.siteUrl, t.Id)
+	return fmt.Sprintf("%s/description.php?id=%s", p.siteUrl, t.ID)
 }
 
 func (p *Piratebay) request(endpoint string) ([]byte, error) {
@@ -86,6 +86,10 @@ func (p *Piratebay) request(endpoint string) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("Error fetching the api: %d", resp.StatusCode)
+	}
 
 	body, err := io.ReadAll(resp.Body)
 
