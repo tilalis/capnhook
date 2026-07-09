@@ -20,6 +20,7 @@ type Media struct {
 	transmission                   *transmission.Transmission
 	cache                          *sieve.Sieve[string, *TorrentSearch]
 	rootDir, moviesDir, tvshowsDir string
+	maxSearchResults               int
 }
 
 type TorrentSearch struct {
@@ -43,21 +44,31 @@ type TorrentStatus struct {
 	Done         bool
 }
 
-func New(root string, p *piratebay.Piratebay, tr *transmission.Transmission) *Media {
+func New(root string, p *piratebay.Piratebay, tr *transmission.Transmission, maxSearchResults int) *Media {
+	if maxSearchResults <= 0 {
+		maxSearchResults = defaultMaxSearchResults
+	}
+
 	return &Media{
-		piratebay:    p,
-		transmission: tr,
-		cache:        sieve.New[string, *TorrentSearch](16, 0),
-		rootDir:      root,
-		moviesDir:    path.Join(root, "Movies"),
-		tvshowsDir:   path.Join(root, "TVShows"),
+		piratebay:        p,
+		transmission:     tr,
+		cache:            sieve.New[string, *TorrentSearch](16, 0),
+		rootDir:          root,
+		moviesDir:        path.Join(root, "Movies"),
+		tvshowsDir:       path.Join(root, "TVShows"),
+		maxSearchResults: maxSearchResults,
 	}
 }
 
+// MaxSearchResults returns the configured cap on the number of search results.
+func (m *Media) MaxSearchResults() int {
+	return m.maxSearchResults
+}
+
 // NewDefault builds a Media backed by the default Piratebay client and a
-// Transmission client at transmissionURL. Empty arguments fall back to
-// built-in defaults.
-func NewDefault(rootDir, transmissionURL string) (*Media, error) {
+// Transmission client at transmissionURL. rootDir and transmissionURL are
+// required; a non-positive maxSearchResults falls back to the built-in default.
+func NewDefault(rootDir, transmissionURL string, maxSearchResults int) (*Media, error) {
 	tr, err := transmission.NewTransmissionClient(transmissionURL)
 	if err != nil {
 		return nil, err
@@ -71,10 +82,14 @@ func NewDefault(rootDir, transmissionURL string) (*Media, error) {
 		return nil, errors.New("transmissionURL is not specified")
 	}
 
-	return New(rootDir, piratebay.NewDefault(), tr), nil
+	return New(rootDir, piratebay.NewDefault(), tr, maxSearchResults), nil
 }
 
 var errBadTransmissionRPCResponse = errors.New("bad Transmission RPC response")
+
+// defaultMaxSearchResults caps how many search results are returned when no
+// explicit limit is configured.
+const defaultMaxSearchResults = 30
 
 func (m *Media) DeleteCurrentTorrent(ctx context.Context, id string) (string, error) {
 	identifier, err := strconv.Atoi(id)
@@ -105,6 +120,28 @@ func (m *Media) DeleteCurrentTorrent(ctx context.Context, id string) (string, er
 	return *torrent.Name, nil
 }
 
+// toTorrentStatus maps a raw Transmission torrent into a TorrentStatus,
+// validating that every field we rely on is present.
+func toTorrentStatus(torrent transmissionrpc.Torrent) (TorrentStatus, error) {
+	if torrent.ID == nil || torrent.Name == nil || torrent.SizeWhenDone == nil || torrent.PercentDone == nil || torrent.ETA == nil {
+		return TorrentStatus{}, errBadTransmissionRPCResponse
+	}
+
+	var eta time.Duration
+	if rawEta := *torrent.ETA; rawEta > 0 {
+		eta = time.Duration(rawEta) * time.Second
+	}
+
+	return TorrentStatus{
+		ID:           *torrent.ID,
+		Name:         *torrent.Name,
+		PercentDone:  *torrent.PercentDone * 100,
+		SizeWhenDone: *torrent.SizeWhenDone,
+		ETA:          eta,
+		Done:         *torrent.PercentDone >= 1.0,
+	}, nil
+}
+
 func (m *Media) GetCurrentTorrent(ctx context.Context, id string) (*TorrentStatus, error) {
 	identifier, err := strconv.Atoi(id)
 	if err != nil {
@@ -116,16 +153,12 @@ func (m *Media) GetCurrentTorrent(ctx context.Context, id string) (*TorrentStatu
 		return nil, fmt.Errorf("get torrent %d: %w", identifier, err)
 	}
 
-	if torrent.ID == nil || torrent.Name == nil || torrent.SizeWhenDone == nil || torrent.PercentDone == nil {
-		return nil, errBadTransmissionRPCResponse
+	status, err := toTorrentStatus(torrent)
+	if err != nil {
+		return nil, err
 	}
 
-	return &TorrentStatus{
-		ID:           *torrent.ID,
-		Name:         *torrent.Name,
-		PercentDone:  *torrent.PercentDone * 100,
-		SizeWhenDone: *torrent.SizeWhenDone,
-	}, nil
+	return &status, nil
 }
 
 func (m *Media) GetCurrentTorrents(ctx context.Context, inProgress bool) ([]TorrentStatus, error) {
@@ -135,37 +168,19 @@ func (m *Media) GetCurrentTorrents(ctx context.Context, inProgress bool) ([]Torr
 		return nil, fmt.Errorf("get all torrents: %w", err)
 	}
 
-	var torrentStatuses []TorrentStatus = make([]TorrentStatus, 0, len(torrents))
+	torrentStatuses := make([]TorrentStatus, 0, len(torrents))
 
 	for _, torrent := range torrents {
-		if torrent.ID == nil || torrent.Name == nil || torrent.SizeWhenDone == nil || torrent.PercentDone == nil || torrent.ETA == nil {
-			return nil, errBadTransmissionRPCResponse
+		status, err := toTorrentStatus(torrent)
+		if err != nil {
+			return nil, err
 		}
 
-		done := false
-		percentDone := *torrent.PercentDone
-
-		if percentDone == 1.0 {
-			if inProgress {
-				continue
-			}
-			done = true
+		if inProgress && status.Done {
+			continue
 		}
 
-		var eta time.Duration
-		rawEta := *torrent.ETA
-
-		if rawEta > 0 {
-			eta = time.Duration(rawEta) * time.Second
-		}
-		torrentStatuses = append(torrentStatuses, TorrentStatus{
-			ID:           *torrent.ID,
-			Name:         *torrent.Name,
-			PercentDone:  *torrent.PercentDone * 100,
-			SizeWhenDone: *torrent.SizeWhenDone,
-			ETA:          eta,
-			Done:         done,
-		})
+		torrentStatuses = append(torrentStatuses, status)
 	}
 
 	return torrentStatuses, nil
@@ -242,11 +257,11 @@ func (m *Media) SearchTorrent(ctx context.Context, query string) ([]TorrentSearc
 		return nil, fmt.Errorf("search torrents for %q: %w", query, err)
 	}
 
-	if len(torrents) >= 30 {
-		torrents = torrents[:30]
+	if len(torrents) > m.maxSearchResults {
+		torrents = torrents[:m.maxSearchResults]
 	}
 
-	var torrentSearch []TorrentSearch = make([]TorrentSearch, 0, 30)
+	torrentSearch := make([]TorrentSearch, 0, len(torrents))
 
 	for _, torrent := range torrents {
 		numFiles, err := torrent.NumFiles.Int64()

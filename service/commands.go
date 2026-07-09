@@ -29,7 +29,7 @@ func QueryCommand(m *media.Media) bot.HandlerFunc {
 		}
 		var (
 			responseText     strings.Builder
-			responseKeyboard [][]models.InlineKeyboardButton = make([][]models.InlineKeyboardButton, 0, 31)
+			responseKeyboard [][]models.InlineKeyboardButton = make([][]models.InlineKeyboardButton, 0, m.MaxSearchResults())
 		)
 
 		for i, torrent := range torrents {

@@ -34,9 +34,16 @@ func main() {
 		return
 	}
 
+	maxSearchResults, err := parseMaxSearchResults(os.Getenv("SEARCH_MAX_RESULTS"))
+	if err != nil {
+		slog.ErrorContext(ctx, err.Error())
+		return
+	}
+
 	mediaService, err := media.NewDefault(
 		os.Getenv("PLEX_ROOT_DIR"),
 		os.Getenv("TRANSMISSION_RPC_URL"),
+		maxSearchResults,
 	)
 	if err != nil {
 		slog.ErrorContext(ctx, err.Error())
@@ -107,7 +114,7 @@ func main() {
 // TELEGRAM_WHITELIST env var.
 func parseWhitelist(raw string) ([]int64, error) {
 	var ids []int64
-	for _, field := range strings.Split(raw, ",") {
+	for field := range strings.SplitSeq(raw, ",") {
 		field = strings.TrimSpace(field)
 		if field == "" {
 			continue
@@ -126,4 +133,24 @@ func parseWhitelist(raw string) ([]int64, error) {
 	}
 
 	return ids, nil
+}
+
+// parseMaxSearchResults parses the optional SEARCH_MAX_RESULTS env var. An empty
+// value yields 0, letting the media package apply its own default.
+func parseMaxSearchResults(raw string) (int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid SEARCH_MAX_RESULTS %q: %w", raw, err)
+	}
+
+	if n <= 0 {
+		return 0, fmt.Errorf("SEARCH_MAX_RESULTS must be positive, got %d", n)
+	}
+
+	return n, nil
 }
