@@ -90,7 +90,7 @@ func ShowTorrentInfoCallbackHandler(m *media.Media) bot.HandlerFunc {
 			return
 		}
 
-		torrent, err := m.FindTorrent(id)
+		torrent, err := m.FindTorrent(ctx, id)
 		if err != nil {
 			slog.ErrorContext(ctx, err.Error())
 			sender.sendError(err)

@@ -18,7 +18,7 @@ type Torrent struct {
 }
 
 func (t Torrent) IsEmpty() bool {
-	return t.ID.String() == "0" && t.Size.String() == "0" && t.NumFiles.String() == "0" && t.Username == "" 
+	return t.ID.String() == "0" && t.Size.String() == "0" && t.NumFiles.String() == "0" && t.Username == ""
 }
 
 func (t Torrent) SizeGB() float64 {

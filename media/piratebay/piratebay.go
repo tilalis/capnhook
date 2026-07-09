@@ -1,6 +1,7 @@
 package piratebay
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -32,8 +33,8 @@ func NewDefault() *Piratebay {
 	return New("", "")
 }
 
-func (p *Piratebay) Find(id string) (*Torrent, error) {
-	body, err := p.request(fmt.Sprintf("t.php?id=%s", url.QueryEscape(id)))
+func (p *Piratebay) Find(ctx context.Context, id string) (*Torrent, error) {
+	body, err := p.request(ctx, fmt.Sprintf("t.php?id=%s", url.QueryEscape(id)))
 
 	if err != nil {
 		return nil, err
@@ -52,8 +53,8 @@ func (p *Piratebay) Find(id string) (*Torrent, error) {
 	return &torrent, nil
 }
 
-func (p *Piratebay) Search(query string) ([]Torrent, error) {
-	body, err := p.request(fmt.Sprintf("q.php?q=%s", url.QueryEscape(query)))
+func (p *Piratebay) Search(ctx context.Context, query string) ([]Torrent, error) {
+	body, err := p.request(ctx, fmt.Sprintf("q.php?q=%s", url.QueryEscape(query)))
 
 	if err != nil {
 		return nil, err
@@ -75,10 +76,10 @@ func (p *Piratebay) SiteUrl(t *Torrent) string {
 	return fmt.Sprintf("%s/description.php?id=%s", p.siteUrl, t.ID)
 }
 
-func (p *Piratebay) request(endpoint string) ([]byte, error) {
+func (p *Piratebay) request(ctx context.Context, endpoint string) ([]byte, error) {
 	url := fmt.Sprintf("%s/%s", p.apiUrl, endpoint)
 
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}

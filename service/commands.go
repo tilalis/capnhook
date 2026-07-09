@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"log"
 	"log/slog"
 	"strings"
 
@@ -16,14 +15,15 @@ import (
 func QueryCommand(m *media.Media) bot.HandlerFunc {
 	return func(ctx context.Context, bot *bot.Bot, update *models.Update) {
 		if update.Message == nil {
-			log.Print("Empty update")
+			slog.ErrorContext(ctx, "Empty update")
 			return
 		}
 
-		torrents, err := m.SearchTorrent(update.Message.Text)
+		torrents, err := m.SearchTorrent(ctx, update.Message.Text)
 		sender := &messageSender{ctx, bot, update}
 
 		if err != nil {
+			slog.ErrorContext(ctx, err.Error())
 			sender.sendError(err)
 			return
 		}
@@ -56,7 +56,8 @@ func QueryCommand(m *media.Media) bot.HandlerFunc {
 		err = sender.sendMessageWithKeyboard(responseText.String(), responseKeyboard)
 
 		if err != nil {
-			log.Print(err)
+			slog.ErrorContext(ctx, err.Error())
+			return
 		}
 	}
 }

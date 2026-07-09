@@ -168,7 +168,7 @@ func (m *Media) DownloadTorrent(ctx context.Context, id string, destination stri
 		return "", "", fmt.Errorf("Wrong destination %s", destination)
 	}
 
-	torrent, err := m.FindTorrent(id)
+	torrent, err := m.FindTorrent(ctx, id)
 
 	if err != nil {
 		return
@@ -184,14 +184,14 @@ func (m *Media) DownloadTorrent(ctx context.Context, id string, destination stri
 	return
 }
 
-func (m *Media) FindTorrent(id string) (*TorrentSearch, error) {
+func (m *Media) FindTorrent(ctx context.Context, id string) (*TorrentSearch, error) {
 	torrent, ok := m.cache.Get(id)
 
 	if ok {
 		return torrent, nil
 	}
 
-	piratebayTorrent, err := m.piratebay.Find(id)
+	piratebayTorrent, err := m.piratebay.Find(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -218,10 +218,8 @@ func (m *Media) FindTorrent(id string) (*TorrentSearch, error) {
 	return torrent, nil
 }
 
-// todo: pass context
-func (m *Media) SearchTorrent(query string) ([]TorrentSearch, error) {
-
-	torrents, err := m.piratebay.Search(query)
+func (m *Media) SearchTorrent(ctx context.Context, query string) ([]TorrentSearch, error) {
+	torrents, err := m.piratebay.Search(ctx, query)
 
 	if err != nil {
 		return nil, err
