@@ -55,11 +55,11 @@ func New(root string, p *piratebay.Piratebay, tr *transmission.Transmission) *Me
 }
 
 func NewDefault() (*Media, error) {
-	transmission_, err := transmission.NewTransmissionClient("")
+	tr, err := transmission.NewTransmissionClient("")
 	if err != nil {
 		return nil, err
 	}
-	return New("/home/tilalis/Plex", piratebay.NewDefault(), transmission_), nil
+	return New("/home/tilalis/Plex", piratebay.NewDefault(), tr), nil
 }
 
 var errBadTransmissionRPCResponse = errors.New("bad Transmission RPC response")

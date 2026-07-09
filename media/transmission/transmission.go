@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	url_ "net/url"
+	"net/url"
 
 	"github.com/hekmon/transmissionrpc/v3"
 )
@@ -26,14 +26,14 @@ func (c *Transmission) TorrentGetByID(ctx context.Context, id int64) (transmissi
 
 const defaultUrl = "http://192.168.1.42:9091/transmission/rpc"
 
-func NewTransmissionClient(url string) (*Transmission, error) {
-	if url == "" {
-		url = defaultUrl
+func NewTransmissionClient(rawURL string) (*Transmission, error) {
+	if rawURL == "" {
+		rawURL = defaultUrl
 	}
 
-	endpoint, err := url_.Parse(url)
+	endpoint, err := url.Parse(rawURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse transmission url %q: %w", url, err)
+		return nil, fmt.Errorf("parse transmission url %q: %w", rawURL, err)
 	}
 	client, err := transmissionrpc.New(endpoint, nil)
 	if err != nil {
