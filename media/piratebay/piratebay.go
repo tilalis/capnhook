@@ -45,6 +45,10 @@ func (p *Piratebay) Find(id string) (*Torrent, error) {
 		return nil, err
 	}
 
+	if torrent.IsEmpty() {
+		return nil, fmt.Errorf("Torrent not found by ID: %s", id)
+	}
+
 	return &torrent, nil
 }
 
@@ -58,6 +62,10 @@ func (p *Piratebay) Search(query string) ([]Torrent, error) {
 	var torrents []Torrent
 	if err := json.Unmarshal(body, &torrents); err != nil {
 		return nil, err
+	}
+
+	if len(torrents) == 1 && torrents[0].IsEmpty() {
+		return nil, fmt.Errorf("No torrents found by query: %s", query)
 	}
 
 	return torrents, nil

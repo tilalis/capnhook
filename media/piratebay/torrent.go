@@ -17,6 +17,10 @@ type Torrent struct {
 	Descr    string      `json:"descr"`
 }
 
+func (t Torrent) IsEmpty() bool {
+	return t.ID.String() == "0" && t.Size.String() == "0" && t.NumFiles.String() == "0" && t.Username == "" 
+}
+
 func (t Torrent) SizeGB() float64 {
 	sizeBytes, err := t.Size.Float64()
 
