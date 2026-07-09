@@ -15,9 +15,25 @@ import (
 	"github.com/tilalis/capnhook/media/transmission"
 )
 
+// piratebayClient is the subset of the Piratebay API that Media depends on.
+type piratebayClient interface {
+	Find(ctx context.Context, id string) (*piratebay.Torrent, error)
+	Search(ctx context.Context, query string) ([]piratebay.Torrent, error)
+	SiteUrl(t *piratebay.Torrent) string
+}
+
+// transmissionClient is the subset of the Transmission RPC client that Media depends on.
+type transmissionClient interface {
+	TorrentGetByID(ctx context.Context, id int64) (transmissionrpc.Torrent, error)
+	TorrentGetAll(ctx context.Context) ([]transmissionrpc.Torrent, error)
+	TorrentAdd(ctx context.Context, payload transmissionrpc.TorrentAddPayload) (transmissionrpc.Torrent, error)
+	TorrentRemove(ctx context.Context, payload transmissionrpc.TorrentRemovePayload) error
+	FreeSpace(ctx context.Context, path string) (freeSpace, totalSize cunits.Bits, err error)
+}
+
 type Media struct {
-	piratebay                      *piratebay.Piratebay
-	transmission                   *transmission.Transmission
+	piratebay                      piratebayClient
+	transmission                   transmissionClient
 	cache                          *sieve.Sieve[string, *TorrentSearch]
 	rootDir, moviesDir, tvshowsDir string
 	maxSearchResults               int
@@ -44,7 +60,7 @@ type TorrentStatus struct {
 	Done         bool
 }
 
-func New(root string, p *piratebay.Piratebay, tr *transmission.Transmission, maxSearchResults int) *Media {
+func New(root string, p piratebayClient, tr transmissionClient, maxSearchResults int) *Media {
 	if maxSearchResults <= 0 {
 		maxSearchResults = defaultMaxSearchResults
 	}
