@@ -54,12 +54,24 @@ func New(root string, p *piratebay.Piratebay, tr *transmission.Transmission) *Me
 	}
 }
 
-func NewDefault() (*Media, error) {
-	tr, err := transmission.NewTransmissionClient("")
+// NewDefault builds a Media backed by the default Piratebay client and a
+// Transmission client at transmissionURL. Empty arguments fall back to
+// built-in defaults.
+func NewDefault(rootDir, transmissionURL string) (*Media, error) {
+	tr, err := transmission.NewTransmissionClient(transmissionURL)
 	if err != nil {
 		return nil, err
 	}
-	return New("/home/tilalis/Plex", piratebay.NewDefault(), tr), nil
+
+	if rootDir == "" {
+		return nil, errors.New("rootDir is not specified")
+	}
+
+	if transmissionURL == "" {
+		return nil, errors.New("transmissionURL is not specified")
+	}
+
+	return New(rootDir, piratebay.NewDefault(), tr), nil
 }
 
 var errBadTransmissionRPCResponse = errors.New("bad Transmission RPC response")
