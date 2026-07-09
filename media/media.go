@@ -62,7 +62,7 @@ func NewDefault() (*Media, error) {
 	return New("/home/tilalis/Plex", piratebay.NewDefault(), transmission_), nil
 }
 
-var errBadTransmissionRPCResponse = errors.New("Bad Transmission RPC response")
+var errBadTransmissionRPCResponse = errors.New("bad Transmission RPC response")
 
 func (m *Media) DeleteCurrentTorrent(ctx context.Context, id string) (string, error) {
 	identifier, err := strconv.Atoi(id)
@@ -165,7 +165,7 @@ func (m *Media) DownloadTorrent(ctx context.Context, id string, destination stri
 	}
 
 	if downloadDir == "" {
-		return "", "", fmt.Errorf("Wrong destination %s", destination)
+		return "", "", fmt.Errorf("wrong destination %s", destination)
 	}
 
 	torrent, err := m.FindTorrent(ctx, id)

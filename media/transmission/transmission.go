@@ -18,7 +18,7 @@ func (c *Transmission) TorrentGetByID(ctx context.Context, id int64) (transmissi
 		return transmissionrpc.Torrent{}, err
 	}
 	if len(torrents) == 0 {
-		return transmissionrpc.Torrent{}, errors.New("No torrents found")
+		return transmissionrpc.Torrent{}, errors.New("no torrents found")
 	}
 	return torrents[0], nil
 }

@@ -47,7 +47,7 @@ func (p *Piratebay) Find(ctx context.Context, id string) (*Torrent, error) {
 	}
 
 	if torrent.IsEmpty() {
-		return nil, fmt.Errorf("Torrent not found by ID: %s", id)
+		return nil, fmt.Errorf("torrent not found by ID: %s", id)
 	}
 
 	return &torrent, nil
@@ -66,7 +66,7 @@ func (p *Piratebay) Search(ctx context.Context, query string) ([]Torrent, error)
 	}
 
 	if len(torrents) == 1 && torrents[0].IsEmpty() {
-		return nil, fmt.Errorf("No torrents found by query: %s", query)
+		return nil, fmt.Errorf("no torrents found by query: %s", query)
 	}
 
 	return torrents, nil
@@ -97,7 +97,7 @@ func (p *Piratebay) request(ctx context.Context, endpoint string) ([]byte, error
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("Error fetching the api: %d", resp.StatusCode)
+		return nil, fmt.Errorf("error fetching the api: %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)

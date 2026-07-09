@@ -23,7 +23,7 @@ func (s *messageSender) chatID() (int64, error) {
 	} else if cq := s.update.CallbackQuery; cq != nil && cq.Message.Message != nil {
 		chatID = s.update.CallbackQuery.Message.Message.Chat.ID
 	} else {
-		return 0, errors.New("Can't extract chat ID from message")
+		return 0, errors.New("can't extract chat ID from message")
 	}
 
 	return chatID, nil

@@ -182,7 +182,7 @@ func (d *callbackMessageSender) parseCallback(n int) (string, []string, error) {
 			ChatID: d.update.CallbackQuery.Message.Message.Chat.ID,
 			Text:   "Something went wrong :(",
 		})
-		return "", nil, errors.New("Can't parse callback data")
+		return "", nil, errors.New("can't parse callback data")
 	}
 
 	return data[1], data, nil
