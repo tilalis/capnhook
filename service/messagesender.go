@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -68,11 +69,14 @@ func (s *messageSender) sendMessageWithKeyboard(
 func (s *messageSender) sendError(sendErr error) {
 	chatID, err := s.chatID()
 	if err != nil {
+		slog.ErrorContext(s.ctx, "can't report error to user", "error", err, "original_error", sendErr)
 		return
 	}
 
-	s.bot.SendMessage(s.ctx, &bot.SendMessageParams{
+	if _, err := s.bot.SendMessage(s.ctx, &bot.SendMessageParams{
 		ChatID: chatID,
 		Text:   fmt.Sprintf("An error happened: %s", sendErr.Error()),
-	})
+	}); err != nil {
+		slog.ErrorContext(s.ctx, "failed to send error message", "error", err, "original_error", sendErr)
+	}
 }

@@ -43,7 +43,7 @@ func (p *Piratebay) Find(ctx context.Context, id string) (*Torrent, error) {
 	var torrent Torrent
 
 	if err := json.Unmarshal(body, &torrent); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unmarshal torrent response: %w", err)
 	}
 
 	if torrent.IsEmpty() {
@@ -62,7 +62,7 @@ func (p *Piratebay) Search(ctx context.Context, query string) ([]Torrent, error)
 
 	var torrents []Torrent
 	if err := json.Unmarshal(body, &torrents); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unmarshal search response: %w", err)
 	}
 
 	if len(torrents) == 1 && torrents[0].IsEmpty() {
@@ -81,7 +81,7 @@ func (p *Piratebay) request(ctx context.Context, endpoint string) ([]byte, error
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("build request for %s: %w", url, err)
 	}
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:152.0) Gecko/20100101 Firefox/152.0")
@@ -92,7 +92,7 @@ func (p *Piratebay) request(ctx context.Context, endpoint string) ([]byte, error
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("request %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 
@@ -103,7 +103,7 @@ func (p *Piratebay) request(ctx context.Context, endpoint string) ([]byte, error
 	body, err := io.ReadAll(resp.Body)
 
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read response from %s: %w", url, err)
 	}
 
 	return body, nil

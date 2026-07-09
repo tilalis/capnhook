@@ -111,14 +111,18 @@ func InfoCommand(m *media.Media) bot.HandlerFunc {
 		responseText := responseStringBuilder.String()
 
 		if responseText == "" {
-			sender.sendMessage("<i>No downloads in progress</i>")
+			if err := sender.sendMessage("<i>No downloads in progress</i>"); err != nil {
+				slog.ErrorContext(ctx, err.Error())
+			}
 			return
 		}
 
-		sender.sendMessageWithKeyboard(
+		if err := sender.sendMessageWithKeyboard(
 			responseText,
 			responseKeyboard,
-		)
+		); err != nil {
+			slog.ErrorContext(ctx, err.Error())
+		}
 	}
 }
 

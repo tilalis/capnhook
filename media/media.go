@@ -67,13 +67,12 @@ var errBadTransmissionRPCResponse = errors.New("bad Transmission RPC response")
 func (m *Media) DeleteCurrentTorrent(ctx context.Context, id string) (string, error) {
 	identifier, err := strconv.Atoi(id)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("invalid torrent id %q: %w", id, err)
 	}
 
 	torrent, err := m.transmission.TorrentGetByID(ctx, int64(identifier))
-
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("get torrent %d: %w", identifier, err)
 	}
 
 	if torrent.ID == nil || torrent.Name == nil {
@@ -87,18 +86,22 @@ func (m *Media) DeleteCurrentTorrent(ctx context.Context, id string) (string, er
 			DeleteLocalData: true,
 		},
 	)
-	return *torrent.Name, err
+	if err != nil {
+		return "", fmt.Errorf("remove torrent %d: %w", *torrent.ID, err)
+	}
+
+	return *torrent.Name, nil
 }
 
 func (m *Media) GetCurrentTorrent(ctx context.Context, id string) (*TorrentStatus, error) {
 	identifier, err := strconv.Atoi(id)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid torrent id %q: %w", id, err)
 	}
 
 	torrent, err := m.transmission.TorrentGetByID(ctx, int64(identifier))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get torrent %d: %w", identifier, err)
 	}
 
 	if torrent.ID == nil || torrent.Name == nil || torrent.SizeWhenDone == nil || torrent.PercentDone == nil {
@@ -117,7 +120,7 @@ func (m *Media) GetCurrentTorrents(ctx context.Context, inProgress bool) ([]Torr
 	torrents, err := m.transmission.TorrentGetAll(ctx)
 
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get all torrents: %w", err)
 	}
 
 	var torrentStatuses []TorrentStatus = make([]TorrentStatus, 0, len(torrents))
@@ -169,9 +172,8 @@ func (m *Media) DownloadTorrent(ctx context.Context, id string, destination stri
 	}
 
 	torrent, err := m.FindTorrent(ctx, id)
-
 	if err != nil {
-		return
+		return "", "", err
 	}
 
 	torrentName = torrent.Name
@@ -180,8 +182,11 @@ func (m *Media) DownloadTorrent(ctx context.Context, id string, destination stri
 		Filename:    &torrent.MagnetLink,
 		DownloadDir: &downloadDir,
 	})
+	if err != nil {
+		return "", "", fmt.Errorf("add torrent %q: %w", torrentName, err)
+	}
 
-	return
+	return torrentName, downloadDir, nil
 }
 
 func (m *Media) FindTorrent(ctx context.Context, id string) (*TorrentSearch, error) {
@@ -193,12 +198,12 @@ func (m *Media) FindTorrent(ctx context.Context, id string) (*TorrentSearch, err
 
 	piratebayTorrent, err := m.piratebay.Find(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("find torrent %q: %w", id, err)
 	}
 
 	numFiles, err := piratebayTorrent.NumFiles.Int64()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse num_files for torrent %q: %w", id, err)
 	}
 
 	torrent = &TorrentSearch{
@@ -222,7 +227,7 @@ func (m *Media) SearchTorrent(ctx context.Context, query string) ([]TorrentSearc
 	torrents, err := m.piratebay.Search(ctx, query)
 
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("search torrents for %q: %w", query, err)
 	}
 
 	if len(torrents) >= 30 {
@@ -235,7 +240,7 @@ func (m *Media) SearchTorrent(ctx context.Context, query string) ([]TorrentSearc
 		numFiles, err := torrent.NumFiles.Int64()
 
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("parse num_files for torrent %q: %w", torrent.ID, err)
 		}
 
 		torrentSearch = append(torrentSearch, TorrentSearch{
@@ -254,5 +259,9 @@ func (m *Media) SearchTorrent(ctx context.Context, query string) ([]TorrentSearc
 
 func (m *Media) FreeSpace(ctx context.Context) (cunits.Bits, error) {
 	freeSpace, _, err := m.transmission.FreeSpace(ctx, m.rootDir)
-	return freeSpace, err
+	if err != nil {
+		return freeSpace, fmt.Errorf("get free space for %q: %w", m.rootDir, err)
+	}
+
+	return freeSpace, nil
 }

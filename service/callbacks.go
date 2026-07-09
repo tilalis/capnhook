@@ -35,7 +35,9 @@ func DownloadTorrentCallbackHandler(m *media.Media) bot.HandlerFunc {
 			return
 		}
 
-		sender.sendMessage(fmt.Sprintf("📥 <i>Downloading %s to %s</i>", torrentName, filepath.Base(downloadDir)))
+		if err := sender.sendMessage(fmt.Sprintf("📥 <i>Downloading %s to %s</i>", torrentName, filepath.Base(downloadDir))); err != nil {
+			slog.ErrorContext(ctx, err.Error())
+		}
 	}
 }
 
@@ -74,7 +76,9 @@ func DeleteTorrentCallbackHandler(m *media.Media) bot.HandlerFunc {
 			return
 		}
 
-		sender.sendMessage(fmt.Sprintf("🗑️ Deleted with all files: %s", torrentName))
+		if err := sender.sendMessage(fmt.Sprintf("🗑️ Deleted with all files: %s", torrentName)); err != nil {
+			slog.ErrorContext(ctx, err.Error())
+		}
 	}
 }
 
@@ -113,7 +117,9 @@ func ShowTorrentInfoCallbackHandler(m *media.Media) bot.HandlerFunc {
 			{{Text: "🎬 Download to TVShows", CallbackData: fmt.Sprintf("download:%s:tvshows", torrent.ID)}},
 		}
 
-		sender.sendMessageWithKeyboard(description, keyboard)
+		if err := sender.sendMessageWithKeyboard(description, keyboard); err != nil {
+			slog.ErrorContext(ctx, err.Error())
+		}
 	}
 }
 
@@ -147,7 +153,9 @@ func ManageTorrentCallbackHandler(m *media.Media) bot.HandlerFunc {
 			{{Text: "⬅️ Back", CallbackData: "deletetorrentback"}},
 		}
 
-		sender.sendMessageWithKeyboard(description, inlineKeyboardButtons)
+		if err := sender.sendMessageWithKeyboard(description, inlineKeyboardButtons); err != nil {
+			slog.ErrorContext(ctx, err.Error())
+		}
 	}
 }
 
@@ -157,15 +165,19 @@ type callbackMessageSender struct {
 }
 
 func (d *callbackMessageSender) answerCallbackQuery() {
-	d.bot.AnswerCallbackQuery(d.ctx, &bot.AnswerCallbackQueryParams{
+	if _, err := d.bot.AnswerCallbackQuery(d.ctx, &bot.AnswerCallbackQueryParams{
 		CallbackQueryID: d.update.CallbackQuery.ID,
 		ShowAlert:       false,
-	})
+	}); err != nil {
+		slog.ErrorContext(d.ctx, "failed to answer callback query", "error", err)
+	}
 
-	d.bot.DeleteMessage(d.ctx, &bot.DeleteMessageParams{
+	if _, err := d.bot.DeleteMessage(d.ctx, &bot.DeleteMessageParams{
 		ChatID:    d.update.CallbackQuery.Message.Message.Chat.ID,
 		MessageID: d.update.CallbackQuery.Message.Message.ID,
-	})
+	}); err != nil {
+		slog.ErrorContext(d.ctx, "failed to delete message", "error", err)
+	}
 
 	d.answered = true
 }
@@ -178,10 +190,12 @@ func (d *callbackMessageSender) parseCallback(n int) (string, []string, error) {
 	data := strings.SplitN(d.update.CallbackQuery.Data, ":", n)
 
 	if len(data) < n {
-		d.bot.SendMessage(d.ctx, &bot.SendMessageParams{
+		if _, err := d.bot.SendMessage(d.ctx, &bot.SendMessageParams{
 			ChatID: d.update.CallbackQuery.Message.Message.Chat.ID,
 			Text:   "Something went wrong :(",
-		})
+		}); err != nil {
+			slog.ErrorContext(d.ctx, "failed to send message", "error", err)
+		}
 		return "", nil, errors.New("can't parse callback data")
 	}
 
