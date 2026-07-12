@@ -2,17 +2,21 @@ package media
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hekmon/cunits/v2"
 	"github.com/hekmon/transmissionrpc/v3"
 	"github.com/scalalang2/golang-fifo/sieve"
-	"github.com/tilalis/capnhook/media/interfaces"
 	"github.com/tilalis/capnhook/media/clients/apibay"
+	"github.com/tilalis/capnhook/media/clients/internetarchive"
+	"github.com/tilalis/capnhook/media/interfaces"
 	"github.com/tilalis/capnhook/media/transmission"
 )
 
@@ -29,6 +33,7 @@ type transmissionClient interface {
 	TorrentGetByID(ctx context.Context, id int64) (transmissionrpc.Torrent, error)
 	TorrentGetAll(ctx context.Context) ([]transmissionrpc.Torrent, error)
 	TorrentAdd(ctx context.Context, payload transmissionrpc.TorrentAddPayload) (transmissionrpc.Torrent, error)
+	TorrentRenamePath(ctx context.Context, id int64, path, name string) error
 	TorrentRemove(ctx context.Context, payload transmissionrpc.TorrentRemovePayload) error
 	FreeSpace(ctx context.Context, path string) (freeSpace, totalSize cunits.Bits, err error)
 }
@@ -63,10 +68,11 @@ func (m *Media) MaxSearchResults() int {
 	return m.maxSearchResults
 }
 
-// NewDefault builds a Media backed by the default Piratebay client and a
-// Transmission client at transmissionURL. rootDir and transmissionURL are
-// required; a non-positive maxSearchResults falls back to the built-in default.
-func NewDefault(rootDir, transmissionURL string, maxSearchResults int) (*Media, error) {
+// NewDefault builds a Media backed by the search client selected by
+// searchClientName (see NewSearchClient) and a Transmission client at
+// transmissionURL. rootDir and transmissionURL are required; a non-positive
+// maxSearchResults falls back to the built-in default.
+func NewDefault(rootDir, transmissionURL, searchClientName string, maxSearchResults int) (*Media, error) {
 	tr, err := transmission.NewTransmissionClient(transmissionURL)
 	if err != nil {
 		return nil, err
@@ -80,7 +86,26 @@ func NewDefault(rootDir, transmissionURL string, maxSearchResults int) (*Media, 
 		return nil, errors.New("transmissionURL is not specified")
 	}
 
-	return New(rootDir, apibay.NewDefault(), tr, maxSearchResults), nil
+	searchClient, err := NewSearchClient(searchClientName)
+	if err != nil {
+		return nil, err
+	}
+
+	return New(rootDir, searchClient, tr, maxSearchResults), nil
+}
+
+// NewSearchClient builds a search client by name. An empty name defaults to
+// "apibay"; "internetarchive" searches permissibly licensed movies on
+// archive.org.
+func NewSearchClient(name string) (interfaces.SearchClient, error) {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "", "apibay":
+		return apibay.NewDefault(), nil
+	case "internetarchive":
+		return internetarchive.NewDefault(), nil
+	default:
+		return nil, fmt.Errorf("unknown search client %q", name)
+	}
 }
 
 var errBadTransmissionRPCResponse = errors.New("bad Transmission RPC response")
@@ -202,17 +227,67 @@ func (m *Media) DownloadTorrent(ctx context.Context, id string, destination stri
 	}
 
 	torrentName = torrent.Name()
-	magnetLink := torrent.MagnetLink()
 
-	_, err = m.transmission.TorrentAdd(ctx, transmissionrpc.TorrentAddPayload{
-		Filename:    &magnetLink,
-		DownloadDir: &downloadDir,
-	})
+	payload := transmissionrpc.TorrentAddPayload{DownloadDir: &downloadDir}
+
+	// Prefer handing the raw torrent contents to Transmission: the daemon may
+	// not be able to reach the search backend's servers itself.
+	if provider, ok := torrent.(interfaces.TorrentFileProvider); ok {
+		contents, err := provider.TorrentFile(ctx)
+		if err != nil {
+			return "", "", fmt.Errorf("fetch torrent file for %q: %w", torrentName, err)
+		}
+
+		metainfo := base64.StdEncoding.EncodeToString(contents)
+		payload.MetaInfo = &metainfo
+	} else {
+		magnetLink := torrent.MagnetLink()
+		payload.Filename = &magnetLink
+	}
+
+	added, err := m.transmission.TorrentAdd(ctx, payload)
 	if err != nil {
 		return "", "", fmt.Errorf("add torrent %q: %w", torrentName, err)
 	}
 
+	// Torrents added by contents keep the name embedded in the file — for
+	// Internet Archive items that is the item identifier, often an opaque or
+	// numeric string. Rename to the human-readable title so both Transmission
+	// and the media library show it.
+	if payload.MetaInfo != nil {
+		m.renameTorrent(ctx, added, torrentName)
+	}
+
 	return torrentName, downloadDir, nil
+}
+
+// renameTorrent renames the added torrent's root path to the search result's
+// title. Best effort: the download is already running, so failures are only
+// logged.
+func (m *Media) renameTorrent(ctx context.Context, torrent transmissionrpc.Torrent, title string) {
+	name := sanitizeTorrentName(title)
+	if name == "" || torrent.ID == nil || torrent.Name == nil || *torrent.Name == name {
+		return
+	}
+
+	if err := m.transmission.TorrentRenamePath(ctx, *torrent.ID, *torrent.Name, name); err != nil {
+		slog.WarnContext(ctx, "failed to rename torrent", "from", *torrent.Name, "to", name, "error", err)
+	}
+}
+
+// sanitizeTorrentName makes a search-result title safe to use as a file or
+// directory name on the download host.
+func sanitizeTorrentName(title string) string {
+	sanitized := strings.Map(func(r rune) rune {
+		if r < 32 || strings.ContainsRune(`/\:*?"<>|`, r) {
+			return ' '
+		}
+		return r
+	}, title)
+
+	sanitized = strings.Join(strings.Fields(sanitized), " ")
+
+	return strings.Trim(sanitized, " .")
 }
 
 func (m *Media) FindTorrent(ctx context.Context, id string) (interfaces.TorrentSearchResult, error) {
@@ -232,7 +307,7 @@ func (m *Media) FindTorrent(ctx context.Context, id string) (interfaces.TorrentS
 	return torrent, nil
 }
 
-func (m *Media) SearchTorrent(ctx context.Context, query string) ([]interfaces.TorrentSearchResult, error) {
+func (m *Media) SearchTorrents(ctx context.Context, query string) ([]interfaces.TorrentSearchResult, error) {
 	torrentSearch, err := m.searchClient.Search(ctx, query, m.maxSearchResults)
 
 	if err != nil {

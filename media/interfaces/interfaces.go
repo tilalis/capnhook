@@ -3,7 +3,6 @@ package interfaces
 import (
 	"context"
 	"time"
-
 )
 
 // SearchClient is a generic torrent search client interface
@@ -16,7 +15,7 @@ type SearchClient interface {
 type TorrentSearchResult interface {
 	ID() string
 	Name() string
-	SizeGB() float64 
+	SizeGB() float64
 	NumFiles() int64
 	AddedTime() time.Time
 	Username() string
@@ -24,3 +23,9 @@ type TorrentSearchResult interface {
 	MagnetLink() string
 }
 
+// TorrentFileProvider is implemented by search results that can supply the
+// raw contents of a .torrent file. Media prefers it over MagnetLink so that
+// the torrent client does not have to fetch anything from the network itself.
+type TorrentFileProvider interface {
+	TorrentFile(ctx context.Context) ([]byte, error)
+}

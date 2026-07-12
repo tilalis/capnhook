@@ -67,7 +67,7 @@ func (p *Apibay) Search(ctx context.Context, query string, limit int) ([]interfa
 		return nil, fmt.Errorf("unmarshal search response: %w", err)
 	}
 
-	if len(torrents) == 1 && torrents[0].IsEmpty() { 
+	if len(torrents) == 1 && torrents[0].IsEmpty() {
 		return nil, fmt.Errorf("no torrents found by query: %s", query)
 	}
 

@@ -2,18 +2,11 @@
 
 A personal Telegram bot for managing a home media server. 
 
-Search [The Pirate Bay](https://thepiratebay.org) from a chat, send torrents to a [Transmission](https://transmissionbt.com/) daemon, and route downloads straight into your Plex library — all from your phone, gated behind a user whitelist.
-
-## ⚖️ A Note on Lawful Use
-
-This tool is just a pipe for moving files — it doesn't know or care what you download. 
-That responsibility is entirely yours.
-
-Only download torrents you are legally allowed to: content you own, content that is freely licensed, or content in the public domain. Respect copyright and the laws of your country. The authors provide this software for legitimate use only and are not responsible for how you use it.
+Search the [Internet Archive](https://archive.org) from a chat, send torrents to a [Transmission](https://transmissionbt.com/) daemon, and route downloads straight into your Plex library — all from your phone, gated behind a user whitelist.
 
 ## Features
 
-- 🔎 **Search** torrents via the apibay API by sending any text message
+- 🔎 **Search** the Internet Archive for freely licensed movies by sending any text message
 - 📥 **Download** a result into your `Movies` or `TVShows` folder with one tap
 - 📊 **Track** progress, ETA and size of active downloads (`/info`, `/inprogress`)
 - 🗑️ **Delete** a torrent and its files from a chat button
@@ -25,7 +18,7 @@ Only download torrents you are legally allowed to: content you own, content that
 
 ```
 Telegram user ──▶ service (handlers, whitelist) ──▶ media (facade + cache)
-                                                      ├─▶ piratebay  (apibay.org search)
+                                                      ├─▶ search client 
                                                       └─▶ transmission (RPC daemon)
 ```
 
@@ -91,11 +84,13 @@ Once the bot is running and your user ID is whitelisted:
 ## Project layout
 
 ```
-main.go                     Composition root: config, wiring, handler registration
-media/                      Orchestration facade over piratebay + transmission, result cache
-media/piratebay/            apibay.org (The Pirate Bay) search client
-media/transmission/         Transmission RPC client wrapper
-service/                    Telegram command/callback handlers, whitelist middleware
+main.go                          Composition root: config, wiring, handler registration
+media/                           Orchestration facade over search + transmission, result cache
+media/interfaces/                Search client interface
+media/clients/internetarchive/   archive.org search client (CC / public domain movies)
+media/clients/apibay/            apibay.org search client
+media/transmission/              Transmission RPC client wrapper
+service/                         Telegram command/callback handlers, whitelist middleware
 ```
 
 ## Testing

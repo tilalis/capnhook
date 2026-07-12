@@ -19,7 +19,7 @@ func QueryCommand(m *media.Media) bot.HandlerFunc {
 			return
 		}
 
-		torrents, err := m.SearchTorrent(ctx, update.Message.Text)
+		torrents, err := m.SearchTorrents(ctx, update.Message.Text)
 		sender := &messageSender{ctx, bot, update}
 
 		if err != nil {

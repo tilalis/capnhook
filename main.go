@@ -43,6 +43,7 @@ func main() {
 	mediaService, err := media.NewDefault(
 		os.Getenv("PLEX_ROOT_DIR"),
 		os.Getenv("TRANSMISSION_RPC_URL"),
+		os.Getenv("SEARCH_CLIENT"),
 		maxSearchResults,
 	)
 	if err != nil {
