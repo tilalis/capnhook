@@ -38,17 +38,17 @@ func QueryCommand(m *media.Media) bot.HandlerFunc {
 				&responseText,
 				"<b>%d</b>: <code>%s</code>\n%.2fGB, %d files, %s by %s\n\n",
 				idx,
-				torrent.Name,
-				torrent.SizeGB,
-				torrent.NumFiles,
-				torrent.Added.Format("2006-01-02"),
-				torrent.Username,
+				torrent.Name(),
+				torrent.SizeGB(),
+				torrent.NumFiles(),
+				torrent.AddedTime().Format("2006-01-02"),
+				torrent.Username(),
 			)
 
 			responseKeyboard = append(
 				responseKeyboard,
 				[]models.InlineKeyboardButton{
-					{Text: fmt.Sprintf("%d: %s", idx, torrent.Name), CallbackData: fmt.Sprintf("id:%s", torrent.ID)},
+					{Text: fmt.Sprintf("%d: %s", idx, torrent.Name()), CallbackData: fmt.Sprintf("id:%s", torrent.ID())},
 				},
 			)
 		}

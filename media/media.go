@@ -11,44 +11,26 @@ import (
 	"github.com/hekmon/cunits/v2"
 	"github.com/hekmon/transmissionrpc/v3"
 	"github.com/scalalang2/golang-fifo/sieve"
-	"github.com/tilalis/capnhook/media/piratebay"
+	"github.com/tilalis/capnhook/media/interfaces"
+	"github.com/tilalis/capnhook/media/clients/apibay"
 	"github.com/tilalis/capnhook/media/transmission"
 )
 
-// piratebayClient is the subset of the Piratebay API that Media depends on.
-type piratebayClient interface {
-	Find(ctx context.Context, id string) (*piratebay.Torrent, error)
-	Search(ctx context.Context, query string) ([]piratebay.Torrent, error)
-	SiteUrl(t *piratebay.Torrent) string
+type Media struct {
+	searchClient                   interfaces.SearchClient
+	transmission                   transmissionClient
+	cache                          *sieve.Sieve[string, interfaces.TorrentSearchResult]
+	rootDir, moviesDir, tvshowsDir string
+	maxSearchResults               int
 }
 
-// transmissionClient is the subset of the Transmission RPC client that Media depends on.
+// trasmissionClient is the subset of the Transmission RPC client that Media depends on.
 type transmissionClient interface {
 	TorrentGetByID(ctx context.Context, id int64) (transmissionrpc.Torrent, error)
 	TorrentGetAll(ctx context.Context) ([]transmissionrpc.Torrent, error)
 	TorrentAdd(ctx context.Context, payload transmissionrpc.TorrentAddPayload) (transmissionrpc.Torrent, error)
 	TorrentRemove(ctx context.Context, payload transmissionrpc.TorrentRemovePayload) error
 	FreeSpace(ctx context.Context, path string) (freeSpace, totalSize cunits.Bits, err error)
-}
-
-type Media struct {
-	piratebay                      piratebayClient
-	transmission                   transmissionClient
-	cache                          *sieve.Sieve[string, *TorrentSearch]
-	rootDir, moviesDir, tvshowsDir string
-	maxSearchResults               int
-}
-
-type TorrentSearch struct {
-	ID          string
-	Name        string
-	SizeGB      float64
-	NumFiles    int
-	Added       time.Time
-	Username    string
-	Description string
-	MagnetLink  string
-	SiteUrl     string
 }
 
 type TorrentStatus struct {
@@ -60,15 +42,15 @@ type TorrentStatus struct {
 	Done         bool
 }
 
-func New(root string, p piratebayClient, tr transmissionClient, maxSearchResults int) *Media {
+func New(root string, s interfaces.SearchClient, tr transmissionClient, maxSearchResults int) *Media {
 	if maxSearchResults <= 0 {
 		maxSearchResults = defaultMaxSearchResults
 	}
 
 	return &Media{
-		piratebay:        p,
+		searchClient:     s,
 		transmission:     tr,
-		cache:            sieve.New[string, *TorrentSearch](16, 0),
+		cache:            sieve.New[string, interfaces.TorrentSearchResult](16, 0),
 		rootDir:          root,
 		moviesDir:        path.Join(root, "Movies"),
 		tvshowsDir:       path.Join(root, "TVShows"),
@@ -98,7 +80,7 @@ func NewDefault(rootDir, transmissionURL string, maxSearchResults int) (*Media, 
 		return nil, errors.New("transmissionURL is not specified")
 	}
 
-	return New(rootDir, piratebay.NewDefault(), tr, maxSearchResults), nil
+	return New(rootDir, apibay.NewDefault(), tr, maxSearchResults), nil
 }
 
 var errBadTransmissionRPCResponse = errors.New("bad Transmission RPC response")
@@ -219,10 +201,11 @@ func (m *Media) DownloadTorrent(ctx context.Context, id string, destination stri
 		return "", "", err
 	}
 
-	torrentName = torrent.Name
+	torrentName = torrent.Name()
+	magnetLink := torrent.MagnetLink()
 
 	_, err = m.transmission.TorrentAdd(ctx, transmissionrpc.TorrentAddPayload{
-		Filename:    &torrent.MagnetLink,
+		Filename:    &magnetLink,
 		DownloadDir: &downloadDir,
 	})
 	if err != nil {
@@ -232,33 +215,16 @@ func (m *Media) DownloadTorrent(ctx context.Context, id string, destination stri
 	return torrentName, downloadDir, nil
 }
 
-func (m *Media) FindTorrent(ctx context.Context, id string) (*TorrentSearch, error) {
+func (m *Media) FindTorrent(ctx context.Context, id string) (interfaces.TorrentSearchResult, error) {
 	torrent, ok := m.cache.Get(id)
 
 	if ok {
 		return torrent, nil
 	}
 
-	piratebayTorrent, err := m.piratebay.Find(ctx, id)
+	torrent, err := m.searchClient.Find(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("find torrent %q: %w", id, err)
-	}
-
-	numFiles, err := piratebayTorrent.NumFiles.Int64()
-	if err != nil {
-		return nil, fmt.Errorf("parse num_files for torrent %q: %w", id, err)
-	}
-
-	torrent = &TorrentSearch{
-		ID:          piratebayTorrent.ID.String(),
-		Name:        piratebayTorrent.Name,
-		SizeGB:      piratebayTorrent.SizeGB(),
-		NumFiles:    int(numFiles),
-		Added:       piratebayTorrent.AddedTime(),
-		Username:    piratebayTorrent.Username,
-		Description: piratebayTorrent.Descr,
-		MagnetLink:  piratebayTorrent.MagnetLink(),
-		SiteUrl:     m.piratebay.SiteUrl(piratebayTorrent),
 	}
 
 	m.cache.Set(id, torrent)
@@ -266,38 +232,18 @@ func (m *Media) FindTorrent(ctx context.Context, id string) (*TorrentSearch, err
 	return torrent, nil
 }
 
-func (m *Media) SearchTorrent(ctx context.Context, query string) ([]TorrentSearch, error) {
-	torrents, err := m.piratebay.Search(ctx, query)
+func (m *Media) SearchTorrent(ctx context.Context, query string) ([]interfaces.TorrentSearchResult, error) {
+	torrentSearch, err := m.searchClient.Search(ctx, query, m.maxSearchResults)
 
 	if err != nil {
 		return nil, fmt.Errorf("search torrents for %q: %w", query, err)
 	}
 
-	if len(torrents) > m.maxSearchResults {
-		torrents = torrents[:m.maxSearchResults]
-	}
-
-	torrentSearch := make([]TorrentSearch, 0, len(torrents))
-
-	for _, torrent := range torrents {
-		numFiles, err := torrent.NumFiles.Int64()
-
-		if err != nil {
-			return nil, fmt.Errorf("parse num_files for torrent %q: %w", torrent.ID, err)
-		}
-
-		torrentSearch = append(torrentSearch, TorrentSearch{
-			ID:          torrent.ID.String(),
-			Name:        torrent.Name,
-			SizeGB:      torrent.SizeGB(),
-			NumFiles:    int(numFiles),
-			Added:       torrent.AddedTime(),
-			Username:    torrent.Username,
-			Description: torrent.Descr,
-		})
-	}
-
 	return torrentSearch, nil
+}
+
+func (m *Media) SiteUrl(t interfaces.TorrentSearchResult) string {
+	return m.searchClient.SiteUrl(t)
 }
 
 func (m *Media) FreeSpace(ctx context.Context) (cunits.Bits, error) {

@@ -103,18 +103,18 @@ func ShowTorrentInfoCallbackHandler(m *media.Media) bot.HandlerFunc {
 
 		description := fmt.Sprintf(
 			"<a href=\"%s\">%s</a>\n<code>%.2fGB | %d files | %s | by %s</code>\n\n<blockquote>%s</blockquote>",
-			torrent.SiteUrl,
-			torrent.Name,
-			torrent.SizeGB,
-			torrent.NumFiles,
-			torrent.Added.Format("2006-01-02"),
-			torrent.Username,
-			torrent.Description,
+			m.SiteUrl(torrent),
+			torrent.Name(),
+			torrent.SizeGB(),
+			torrent.NumFiles(),
+			torrent.AddedTime().Format("2006-01-02"),
+			torrent.Username(),
+			torrent.Description(),
 		)
 
 		keyboard := [][]models.InlineKeyboardButton{
-			{{Text: "📺 Download to Movies", CallbackData: fmt.Sprintf("download:%s:movies", torrent.ID)}},
-			{{Text: "🎬 Download to TVShows", CallbackData: fmt.Sprintf("download:%s:tvshows", torrent.ID)}},
+			{{Text: "📺 Download to Movies", CallbackData: fmt.Sprintf("download:%s:movies", torrent.ID())}},
+			{{Text: "🎬 Download to TVShows", CallbackData: fmt.Sprintf("download:%s:tvshows", torrent.ID())}},
 		}
 
 		if err := sender.sendMessageWithKeyboard(description, keyboard); err != nil {
