@@ -2,10 +2,11 @@ package paginator
 
 import (
 	"errors"
+	"iter"
 )
 
 // A simple paginator for arbitruary slices, pages are zero-indexed for simplicity
-type Paginator[T []E, E any] struct {
+type Paginator[T ~[]E, E any] struct {
 	data       T
 	size       int
 	pageNumber int
@@ -17,7 +18,7 @@ var errOutOfBoundsPage = errors.New("page is out of bounds")
 func NewPaginator[T []E, E any](data T, pageSize int, pageNumber int) (*Paginator[T, E], error) {
 	size := len(data)
 
-	if pageSize * pageNumber >= size {
+	if pageSize*pageNumber >= size {
 		return nil, errOutOfBoundsPage
 	}
 
@@ -29,20 +30,51 @@ func NewPaginator[T []E, E any](data T, pageSize int, pageNumber int) (*Paginato
 	}, nil
 }
 
+func (p *Paginator[T, E]) pageBoundaries() (start, end int) {
+	start = p.pageNumber * p.pageSize
+	if end > p.size {
+		end = p.size - 1
+	} else {
+		end = start + p.pageSize
+	}
+	return
+}
+
+func (p *Paginator[T, E]) Size() int {
+	return p.size
+}
+
 // Returns the paginated slice
 func (p *Paginator[T, E]) Slice() T {
-	start := p.pageNumber * p.pageSize
-	end := start + p.pageSize
-
-	if end > len(p.data) {
-		return p.data[start:]
-	}
-
+	start, end := p.pageBoundaries()
 	return p.data[start:end]
 }
 
-func (p Paginator[T, E]) PageNumber() int {
+func (p *Paginator[T, E]) IterCurrentPage() iter.Seq2[int, E] {
+	return func(yield func(int, E) bool) {
+		start, end := p.pageBoundaries()
+		for index, item := range p.data[start:end] {
+			yield(start+index, item)
+		}
+	}
+}
+
+var errCantSetPage = errors.New("can't set page")
+
+func (p *Paginator[T, E]) SetPage(pageNumber int) error {
+	if pageNumber*p.pageSize > p.size {
+		return errCantSetPage
+	}
+	p.pageNumber = pageNumber
+	return nil
+}
+
+func (p *Paginator[T, E]) PageNumber() int {
 	return p.pageNumber
+}
+
+func (p *Paginator[T, E]) PageSize() int {
+	return p.pageSize
 }
 
 var errNoNext = errors.New("no next page")

@@ -23,7 +23,8 @@ import (
 type Media struct {
 	searchClient                   interfaces.SearchClient
 	transmission                   transmissionClient
-	cache                          *sieve.Sieve[string, interfaces.TorrentSearchResult]
+	findCache                      *sieve.Sieve[string, interfaces.TorrentSearchResult]
+	searchCache                    *sieve.Sieve[string, []interfaces.TorrentSearchResult]
 	rootDir, moviesDir, tvshowsDir string
 	maxSearchResults               int
 }
@@ -47,6 +48,10 @@ type TorrentStatus struct {
 	Done         bool
 }
 
+// defaultMaxSearchResults caps how many search results are returned when no
+// explicit limit is configured.
+const defaultMaxSearchResults = 30
+
 func New(root string, s interfaces.SearchClient, tr transmissionClient, maxSearchResults int) *Media {
 	if maxSearchResults <= 0 {
 		maxSearchResults = defaultMaxSearchResults
@@ -55,7 +60,8 @@ func New(root string, s interfaces.SearchClient, tr transmissionClient, maxSearc
 	return &Media{
 		searchClient:     s,
 		transmission:     tr,
-		cache:            sieve.New[string, interfaces.TorrentSearchResult](16, 0),
+		findCache:        sieve.New[string, interfaces.TorrentSearchResult](16, 0),
+		searchCache:      sieve.New[string, []interfaces.TorrentSearchResult](128, time.Minute*5),
 		rootDir:          root,
 		moviesDir:        path.Join(root, "Movies"),
 		tvshowsDir:       path.Join(root, "TVShows"),
@@ -95,8 +101,7 @@ func NewDefault(rootDir, transmissionURL, searchClientName string, maxSearchResu
 }
 
 // NewSearchClient builds a search client by name. An empty name defaults to
-// "apibay"; "internetarchive" searches permissibly licensed movies on
-// archive.org.
+// "apibay";
 func NewSearchClient(name string) (interfaces.SearchClient, error) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "", "apibay":
@@ -109,10 +114,6 @@ func NewSearchClient(name string) (interfaces.SearchClient, error) {
 }
 
 var errBadTransmissionRPCResponse = errors.New("bad Transmission RPC response")
-
-// defaultMaxSearchResults caps how many search results are returned when no
-// explicit limit is configured.
-const defaultMaxSearchResults = 30
 
 func (m *Media) DeleteCurrentTorrent(ctx context.Context, id string) (string, error) {
 	identifier, err := strconv.Atoi(id)
@@ -291,7 +292,7 @@ func sanitizeTorrentName(title string) string {
 }
 
 func (m *Media) FindTorrent(ctx context.Context, id string) (interfaces.TorrentSearchResult, error) {
-	torrent, ok := m.cache.Get(id)
+	torrent, ok := m.findCache.Get(id)
 
 	if ok {
 		return torrent, nil
@@ -302,13 +303,33 @@ func (m *Media) FindTorrent(ctx context.Context, id string) (interfaces.TorrentS
 		return nil, fmt.Errorf("find torrent %q: %w", id, err)
 	}
 
-	m.cache.Set(id, torrent)
+	m.findCache.Set(id, torrent)
 
 	return torrent, nil
 }
 
+// realistically, query should not be longer than that
+const cacheKeyQueryMaxLength = 64
+
 func (m *Media) SearchTorrents(ctx context.Context, query string) ([]interfaces.TorrentSearchResult, error) {
-	torrentSearch, err := m.searchClient.Search(ctx, query, m.maxSearchResults)
+	// in case there's no such key or value is not string, we'll get an empty string
+	// not great, not terrible
+	userID, _ := ctx.Value("userID").(string)
+
+	// calculating cache key
+	queryRunes := []rune(query)
+	if len(queryRunes) > cacheKeyQueryMaxLength {
+		queryRunes = queryRunes[:cacheKeyQueryMaxLength]
+	}
+	truncatedQuery := string(queryRunes)
+	cacheKey := userID + truncatedQuery
+
+	torrentSearch, ok := m.searchCache.Get(cacheKey)
+
+	var err error
+	if !ok {
+		torrentSearch, err = m.searchClient.Search(ctx, query, m.maxSearchResults)
+	}
 
 	if err != nil {
 		return nil, fmt.Errorf("search torrents for %q: %w", query, err)

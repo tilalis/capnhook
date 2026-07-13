@@ -2,15 +2,16 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/tilalis/capnhook/media"
+	"github.com/tilalis/capnhook/service/paginator"
 )
 
 // handles download* callbacks
@@ -82,18 +83,21 @@ func DeleteTorrentCallbackHandler(m *media.Media) bot.HandlerFunc {
 	}
 }
 
+const maximumDescriptionLength = 3072
+
 // handles id* callbacks
 func ShowTorrentInfoCallbackHandler(m *media.Media) bot.HandlerFunc {
 	return func(ctx context.Context, bot *bot.Bot, update *models.Update) {
 		sender := &callbackMessageSender{
 			messageSender: messageSender{ctx, bot, update},
 		}
-		id, _, err := sender.parseCallback(2)
+		id, data, err := sender.parseCallback(3)
 		if err != nil {
 			slog.ErrorContext(ctx, err.Error())
 			return
 		}
 
+		query := data[2]
 		torrent, err := m.FindTorrent(ctx, id)
 		if err != nil {
 			slog.ErrorContext(ctx, err.Error())
@@ -101,20 +105,26 @@ func ShowTorrentInfoCallbackHandler(m *media.Media) bot.HandlerFunc {
 			return
 		}
 
+		descriptionTextRunes := []rune(torrent.Description())
+		if len(descriptionTextRunes) > maximumDescriptionLength {
+			descriptionTextRunes = descriptionTextRunes[:maximumDescriptionLength]
+		}
+
 		description := fmt.Sprintf(
-			"<a href=\"%s\">%s</a>\n<code>%.2fGB | %d files | %s | by %s</code>\n\n<blockquote>%s</blockquote>",
+			"<a href=\"%s\">%s</a>\n<blockquote>%.2fGB | %d files | %s | by %s</blockquote><blockquote expandable>%s</blockquote>",
 			m.SiteUrl(torrent),
 			torrent.Name(),
 			torrent.SizeGB(),
 			torrent.NumFiles(),
 			torrent.AddedTime().Format("2006-01-02"),
 			torrent.Username(),
-			torrent.Description(),
+			string(descriptionTextRunes),
 		)
 
 		keyboard := [][]models.InlineKeyboardButton{
 			{{Text: "📺 Download to Movies", CallbackData: fmt.Sprintf("download:%s:movies", torrent.ID())}},
 			{{Text: "🎬 Download to TVShows", CallbackData: fmt.Sprintf("download:%s:tvshows", torrent.ID())}},
+			{{Text: "⏪ Back", CallbackData: fmt.Sprintf("page:0:%s", query)}},
 		}
 
 		if err := sender.sendMessageWithKeyboard(description, keyboard); err != nil {
@@ -159,45 +169,46 @@ func ManageTorrentCallbackHandler(m *media.Media) bot.HandlerFunc {
 	}
 }
 
-type callbackMessageSender struct {
-	messageSender
-	answered bool
-}
-
-func (d *callbackMessageSender) answerCallbackQuery() {
-	if _, err := d.bot.AnswerCallbackQuery(d.ctx, &bot.AnswerCallbackQueryParams{
-		CallbackQueryID: d.update.CallbackQuery.ID,
-		ShowAlert:       false,
-	}); err != nil {
-		slog.ErrorContext(d.ctx, "failed to answer callback query", "error", err)
-	}
-
-	if _, err := d.bot.DeleteMessage(d.ctx, &bot.DeleteMessageParams{
-		ChatID:    d.update.CallbackQuery.Message.Message.Chat.ID,
-		MessageID: d.update.CallbackQuery.Message.Message.ID,
-	}); err != nil {
-		slog.ErrorContext(d.ctx, "failed to delete message", "error", err)
-	}
-
-	d.answered = true
-}
-
-func (d *callbackMessageSender) parseCallback(n int) (string, []string, error) {
-	if !d.answered {
-		d.answerCallbackQuery()
-	}
-
-	data := strings.SplitN(d.update.CallbackQuery.Data, ":", n)
-
-	if len(data) < n {
-		if _, err := d.bot.SendMessage(d.ctx, &bot.SendMessageParams{
-			ChatID: d.update.CallbackQuery.Message.Message.Chat.ID,
-			Text:   "Something went wrong :(",
-		}); err != nil {
-			slog.ErrorContext(d.ctx, "failed to send message", "error", err)
+// handles page* callback
+func TorrentsPageCallbackHandler(m *media.Media) bot.HandlerFunc {
+	return func(ctx context.Context, bot *bot.Bot, update *models.Update) {
+		sender := &callbackMessageSender{
+			messageSender: messageSender{ctx, bot, update},
 		}
-		return "", nil, errors.New("can't parse callback data")
-	}
 
-	return data[1], data, nil
+		pageNumberString, data, err := sender.parseCallback(3)
+
+		if err != nil {
+			slog.ErrorContext(ctx, err.Error())
+			sender.sendError(err)
+			return
+		}
+
+		query := data[2]
+		pageNumber, err := strconv.Atoi(pageNumberString)
+
+		if err != nil {
+			slog.ErrorContext(ctx, err.Error())
+			sender.sendError(err)
+			return
+		}
+
+		// cached search
+		torrents, err := m.SearchTorrents(ctx, query)
+
+		if err != nil {
+			slog.ErrorContext(ctx, err.Error())
+			sender.sendError(err)
+			return
+		}
+
+		torrentsPaginator, err := paginator.NewPaginator(torrents, 5, pageNumber)
+
+		if err != nil {
+			slog.ErrorContext(ctx, err.Error())
+			sender.sendError(err)
+			return
+		}
+		err = sendTorrentsMessage(sender, torrentsPaginator, query)
+	}
 }

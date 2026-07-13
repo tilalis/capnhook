@@ -5,10 +5,18 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 )
+
+// utility interface to wrap telegram bot message sending
+type messager interface {
+	sendMessage(responseText string) error
+	sendMessageWithKeyboard(responseText string, keyboard [][]models.InlineKeyboardButton) error
+	sendError(sendErr error)
+}
 
 type messageSender struct {
 	ctx    context.Context
@@ -79,4 +87,47 @@ func (s *messageSender) sendError(sendErr error) {
 	}); err != nil {
 		slog.ErrorContext(s.ctx, "failed to send error message", "error", err, "original_error", sendErr)
 	}
+}
+
+type callbackMessageSender struct {
+	messageSender
+	answered bool
+}
+
+func (d *callbackMessageSender) answerCallbackQuery() {
+	if _, err := d.bot.AnswerCallbackQuery(d.ctx, &bot.AnswerCallbackQueryParams{
+		CallbackQueryID: d.update.CallbackQuery.ID,
+		ShowAlert:       false,
+	}); err != nil {
+		slog.ErrorContext(d.ctx, "failed to answer callback query", "error", err)
+	}
+
+	if _, err := d.bot.DeleteMessage(d.ctx, &bot.DeleteMessageParams{
+		ChatID:    d.update.CallbackQuery.Message.Message.Chat.ID,
+		MessageID: d.update.CallbackQuery.Message.Message.ID,
+	}); err != nil {
+		slog.ErrorContext(d.ctx, "failed to delete message", "error", err)
+	}
+
+	d.answered = true
+}
+
+func (d *callbackMessageSender) parseCallback(n int) (string, []string, error) {
+	if !d.answered {
+		d.answerCallbackQuery()
+	}
+
+	data := strings.SplitN(d.update.CallbackQuery.Data, ":", n)
+
+	if len(data) < n {
+		if _, err := d.bot.SendMessage(d.ctx, &bot.SendMessageParams{
+			ChatID: d.update.CallbackQuery.Message.Message.Chat.ID,
+			Text:   "Something went wrong :(",
+		}); err != nil {
+			slog.ErrorContext(d.ctx, "failed to send message", "error", err)
+		}
+		return "", nil, errors.New("can't parse callback data")
+	}
+
+	return data[1], data, nil
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"github.com/tilalis/capnhook/media"
+	"github.com/tilalis/capnhook/service/paginator"
 )
 
 // handles general text messages
@@ -19,7 +20,11 @@ func QueryCommand(m *media.Media) bot.HandlerFunc {
 			return
 		}
 
-		torrents, err := m.SearchTorrents(ctx, update.Message.Text)
+		query := update.Message.Text
+		torrents, err := m.SearchTorrents(
+			context.WithValue(ctx, "userID", update.Message.From.ID), 
+			query,
+		)
 		sender := &messageSender{ctx, bot, update}
 
 		if err != nil {
@@ -27,33 +32,9 @@ func QueryCommand(m *media.Media) bot.HandlerFunc {
 			sender.sendError(err)
 			return
 		}
-		var (
-			responseText     strings.Builder
-			responseKeyboard [][]models.InlineKeyboardButton = make([][]models.InlineKeyboardButton, 0, m.MaxSearchResults())
-		)
 
-		for i, torrent := range torrents {
-			idx := i + 1
-			fmt.Fprintf(
-				&responseText,
-				"<b>%d</b>: <code>%s</code>\n%.2fGB, %d files, %s by %s\n\n",
-				idx,
-				torrent.Name(),
-				torrent.SizeGB(),
-				torrent.NumFiles(),
-				torrent.AddedTime().Format("2006-01-02"),
-				torrent.Username(),
-			)
-
-			responseKeyboard = append(
-				responseKeyboard,
-				[]models.InlineKeyboardButton{
-					{Text: fmt.Sprintf("%d: %s", idx, torrent.Name()), CallbackData: fmt.Sprintf("id:%s", torrent.ID())},
-				},
-			)
-		}
-
-		err = sender.sendMessageWithKeyboard(responseText.String(), responseKeyboard)
+		torrentsPaginator, _ := paginator.NewPaginator(torrents, 5, 0)
+		err = sendTorrentsMessage(sender, torrentsPaginator, query)
 
 		if err != nil {
 			slog.ErrorContext(ctx, err.Error())

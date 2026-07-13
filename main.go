@@ -74,6 +74,11 @@ func main() {
 			service.ManageTorrentCallbackHandler(mediaService),
 		),
 		bot.WithCallbackQueryDataHandler(
+			"page",
+			bot.MatchTypePrefix,
+			service.TorrentsPageCallbackHandler(mediaService),
+		),
+		bot.WithCallbackQueryDataHandler(
 			"deletetorrent",
 			bot.MatchTypePrefix,
 			service.DeleteTorrentCallbackHandler(mediaService),
