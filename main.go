@@ -51,65 +51,54 @@ func main() {
 		return
 	}
 
-	options := []bot.Option{
-		bot.WithMiddlewares(
-			service.UsersWhitelistMiddleware(whitelist...),
-		),
-		bot.WithDefaultHandler(
-			service.QueryCommand(mediaService),
-		),
-		bot.WithCallbackQueryDataHandler(
-			"id",
-			bot.MatchTypePrefix,
-			service.ShowTorrentInfoCallbackHandler(mediaService),
-		),
-		bot.WithCallbackQueryDataHandler(
-			"download",
-			bot.MatchTypePrefix,
-			service.DownloadTorrentCallbackHandler(mediaService),
-		),
-		bot.WithCallbackQueryDataHandler(
-			"torrent",
-			bot.MatchTypePrefix,
-			service.ManageTorrentCallbackHandler(mediaService),
-		),
-		bot.WithCallbackQueryDataHandler(
-			"page",
-			bot.MatchTypePrefix,
-			service.TorrentsPageCallbackHandler(mediaService),
-		),
-		bot.WithCallbackQueryDataHandler(
-			"deletetorrent",
-			bot.MatchTypePrefix,
-			service.DeleteTorrentCallbackHandler(mediaService),
-		),
-	}
+	b, err := bot.New(
+		os.Getenv("TELEGRAM_BOT_TOKEN"),
+		[]bot.Option{
+			bot.WithMiddlewares(
+				service.EnrichContextWithUserID,
+				service.UsersWhitelistMiddleware(whitelist...),
+			),
+			bot.WithDefaultHandler(
+				service.QueryCommand(mediaService),
+			),
+		}...,
+	)
 
-	b, err := bot.New(os.Getenv("TELEGRAM_BOT_TOKEN"), options...)
 	if err != nil {
 		slog.ErrorContext(ctx, err.Error())
 		return
 	}
 
 	infoCommand := service.InfoCommand(mediaService)
-	b.RegisterHandler(
-		bot.HandlerTypeMessageText,
-		"info",
-		bot.MatchTypeCommandStartOnly,
-		infoCommand,
-	)
-	b.RegisterHandler(
-		bot.HandlerTypeMessageText,
-		"inprogress",
-		bot.MatchTypeCommandStartOnly,
-		infoCommand,
-	)
-	b.RegisterHandler(
-		bot.HandlerTypeMessageText,
-		"space",
-		bot.MatchTypeCommandStartOnly,
-		service.SpaceCommand(mediaService),
-	)
+	commandHandlers := map[string]bot.HandlerFunc{
+		"info":       infoCommand,
+		"inprogress": infoCommand,
+		"space":      service.SpaceCommand(mediaService),
+	}
+	for pattern, handler := range commandHandlers {
+		b.RegisterHandler(
+			bot.HandlerTypeMessageText,
+			pattern,
+			bot.MatchTypeCommandStartOnly,
+			handler,
+		)
+	}
+
+	callbackHandlers := map[string]bot.HandlerFunc{
+		"id":            service.ShowTorrentInfoCallbackHandler(mediaService),
+		"download":      service.DeleteTorrentCallbackHandler(mediaService),
+		"torrent":       service.ManageTorrentCallbackHandler(mediaService),
+		"page":          service.TorrentsPageCallbackHandler(mediaService),
+		"deletetorrent": service.DeleteTorrentCallbackHandler(mediaService),
+	}
+	for pattern, handler := range callbackHandlers {
+		b.RegisterHandler(
+			bot.HandlerTypeCallbackQueryData,
+			pattern,
+			bot.MatchTypePrefix,
+			handler,
+		)
+	}
 
 	slog.Info("Capn' Hook service is up and running!")
 	b.Start(ctx)

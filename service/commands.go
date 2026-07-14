@@ -21,10 +21,7 @@ func QueryCommand(m *media.Media) bot.HandlerFunc {
 		}
 
 		query := update.Message.Text
-		torrents, err := m.SearchTorrents(
-			context.WithValue(ctx, "userID", update.Message.From.ID), 
-			query,
-		)
+		torrents, err := m.SearchTorrents(ctx, query)
 		sender := &messageSender{ctx, bot, update}
 
 		if err != nil {
