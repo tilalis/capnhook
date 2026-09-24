@@ -92,6 +92,7 @@ func (s *messageSender) sendError(sendErr error) {
 type callbackMessageSender struct {
 	messageSender
 	answered bool
+	keepOnAnswer bool
 }
 
 func (d *callbackMessageSender) answerCallbackQuery() {
@@ -102,11 +103,13 @@ func (d *callbackMessageSender) answerCallbackQuery() {
 		slog.ErrorContext(d.ctx, "failed to answer callback query", "error", err)
 	}
 
-	if _, err := d.bot.DeleteMessage(d.ctx, &bot.DeleteMessageParams{
-		ChatID:    d.update.CallbackQuery.Message.Message.Chat.ID,
-		MessageID: d.update.CallbackQuery.Message.Message.ID,
-	}); err != nil {
-		slog.ErrorContext(d.ctx, "failed to delete message", "error", err)
+	if !d.keepOnAnswer {
+		if _, err := d.bot.DeleteMessage(d.ctx, &bot.DeleteMessageParams{
+			ChatID:    d.update.CallbackQuery.Message.Message.Chat.ID,
+			MessageID: d.update.CallbackQuery.Message.Message.ID,
+		}); err != nil {
+			slog.ErrorContext(d.ctx, "failed to delete message", "error", err)
+		}
 	}
 
 	d.answered = true

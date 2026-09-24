@@ -32,11 +32,10 @@ func NewPaginator[T []E, E any](data T, pageSize int, pageNumber int) (*Paginato
 
 func (p *Paginator[T, E]) pageBoundaries() (start, end int) {
 	start = p.pageNumber * p.pageSize
-	if end > p.size {
-		end = p.size - 1
-	} else {
-		end = start + p.pageSize
-	}
+
+	// The last page is short whenever the data does not divide evenly.
+	end = min(start+p.pageSize, p.size)
+
 	return
 }
 
@@ -54,7 +53,9 @@ func (p *Paginator[T, E]) IterCurrentPage() iter.Seq2[int, E] {
 	return func(yield func(int, E) bool) {
 		start, end := p.pageBoundaries()
 		for index, item := range p.data[start:end] {
-			yield(start+index, item)
+			if !yield(start+index, item) {
+				break
+			}
 		}
 	}
 }
@@ -62,7 +63,9 @@ func (p *Paginator[T, E]) IterCurrentPage() iter.Seq2[int, E] {
 var errCantSetPage = errors.New("can't set page")
 
 func (p *Paginator[T, E]) SetPage(pageNumber int) error {
-	if pageNumber*p.pageSize > p.size {
+	// Mirrors the bound NewPaginator rejects on: the first item of the page has
+	// to exist, otherwise the page is empty.
+	if pageNumber*p.pageSize >= p.size {
 		return errCantSetPage
 	}
 	p.pageNumber = pageNumber

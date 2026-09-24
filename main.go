@@ -28,11 +28,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	whitelist, err := parseWhitelist(os.Getenv("TELEGRAM_WHITELIST"))
-	if err != nil {
-		slog.ErrorContext(ctx, err.Error())
-		return
-	}
+	whitelist := strings.Split(os.Getenv("TELEGRAM_WHITELIST"), ",")
 
 	maxSearchResults, err := parseMaxSearchResults(os.Getenv("SEARCH_MAX_RESULTS"))
 	if err != nil {
@@ -51,19 +47,27 @@ func main() {
 		return
 	}
 
-	b, err := bot.New(
-		os.Getenv("TELEGRAM_BOT_TOKEN"),
-		[]bot.Option{
-			bot.WithMiddlewares(
-				service.EnrichContextWithUserID,
-				service.UsersWhitelistMiddleware(whitelist...),
-			),
-			bot.WithDefaultHandler(
-				service.QueryCommand(mediaService),
-			),
-		}...,
-	)
+	webhookConfig, err := parseWebhookConfig()
+	if err != nil {
+		slog.ErrorContext(ctx, err.Error())
+		return
+	}
 
+	options := []bot.Option{
+		bot.WithMiddlewares(
+			service.EnrichContextWithUserID,
+			service.UsersWhitelistMiddleware(whitelist...),
+		),
+		bot.WithDefaultHandler(
+			service.QueryCommand(mediaService),
+		),
+	}
+
+	if webhookConfig != nil && webhookConfig.secretToken != "" {
+		options = append(options, bot.WithWebhookSecretToken(webhookConfig.secretToken))
+	}
+
+	b, err := bot.New(os.Getenv("TELEGRAM_BOT_TOKEN"), options...)
 	if err != nil {
 		slog.ErrorContext(ctx, err.Error())
 		return
@@ -84,12 +88,15 @@ func main() {
 		)
 	}
 
+	trackTorrentCallbackHandler := service.TrackTorrentCallbackHandler(mediaService)
 	callbackHandlers := map[string]bot.HandlerFunc{
 		"id":            service.ShowTorrentInfoCallbackHandler(mediaService),
-		"download":      service.DeleteTorrentCallbackHandler(mediaService),
+		"download":      service.DownloadTorrentCallbackHandler(mediaService),
 		"torrent":       service.ManageTorrentCallbackHandler(mediaService),
 		"page":          service.TorrentsPageCallbackHandler(mediaService),
 		"deletetorrent": service.DeleteTorrentCallbackHandler(mediaService),
+		"track":         trackTorrentCallbackHandler,
+		"untrack":       trackTorrentCallbackHandler,
 	}
 	for pattern, handler := range callbackHandlers {
 		b.RegisterHandler(
@@ -101,7 +108,19 @@ func main() {
 	}
 
 	slog.Info("Capn' Hook service is up and running!")
-	b.Start(ctx)
+
+	serve := servePolling
+	if webhookConfig != nil {
+		serve = func(ctx context.Context, b *bot.Bot) error {
+			return serveWebhook(ctx, b, webhookConfig)
+		}
+	}
+
+	if err := serve(ctx, b); err != nil {
+		slog.ErrorContext(ctx, err.Error())
+		return
+	}
+
 	slog.Info("The service is shutting down...")
 }
 
