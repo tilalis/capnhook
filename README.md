@@ -49,6 +49,10 @@ cp .env.example .env
 | `TRANSMISSION_RPC_URL` |    ✅    | `http://192.168.1.42:9091/transmission/rpc`    | Transmission RPC endpoint                                          |
 | `PLEX_ROOT_DIR`        |    ✅    | —                                              | Root media directory containing `Movies/` and `TVShows/`          |
 | `SEARCH_MAX_RESULTS`   |          | `30`                                           | Max number of search results shown per query                       |
+| `TELEGRAM_WEBHOOK_URL`    |          | —         | Public https url Telegram pushes updates to. Set it to serve in webhook mode; leave empty for long polling |
+| `TELEGRAM_WEBHOOK_ADDR`   |          | `:8080`   | Address the webhook server listens on                              |
+| `TELEGRAM_WEBHOOK_PATH`   |          | path of `TELEGRAM_WEBHOOK_URL` | Local path to serve the webhook on; only needed when a proxy rewrites the path |
+| `TELEGRAM_WEBHOOK_SECRET` |          | —         | Shared secret validated against `X-Telegram-Bot-Api-Secret-Token`  |
 
 > **Note:** `.env` holds your bot token and is git-ignored. Never commit it. If a
 > token is ever exposed, revoke it via @BotFather.
@@ -69,6 +73,45 @@ go build -o capnhook .
 
 The process handles `SIGINT` (Ctrl-C) for a clean shutdown.
 
+### Serving modes
+
+The bot receives updates either way — pick whichever fits your deployment:
+
+- **Long polling** (default) — the bot asks Telegram for updates. Nothing has to
+  be reachable from the internet, which makes it the easy choice on a home
+  server. Any webhook registered by a previous run is removed on startup.
+- **Webhook** — Telegram pushes updates to you. Set `TELEGRAM_WEBHOOK_URL` and
+  the bot registers that url, then serves it on `TELEGRAM_WEBHOOK_ADDR` at the
+  url's path. This needs a public **https** endpoint (Telegram refuses plain
+  http), so put a TLS-terminating reverse proxy in front of the bot and forward
+  to it.
+
+```sh
+TELEGRAM_WEBHOOK_URL=https://bot.example.com/telegram/hook
+TELEGRAM_WEBHOOK_ADDR=:8080
+TELEGRAM_WEBHOOK_SECRET=some-long-random-string
+```
+
+With the above, the bot serves `POST /telegram/hook` on port 8080 and rejects
+any request whose `X-Telegram-Bot-Api-Secret-Token` header does not match the
+secret. Set a secret whenever you expose the endpoint: the url alone is the only
+thing standing between the internet and your update stream.
+
+A request whose secret does not match is answered with `403`, so a broken setup
+shows up in Telegram's own diagnostics:
+
+```sh
+curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getWebhookInfo"
+```
+
+A non-empty `last_error_message` there means Telegram is reaching the bot but
+being turned away — most often a proxy that drops the
+`X-Telegram-Bot-Api-Secret-Token` header.
+
+On shutdown the webhook stays registered, so Telegram queues updates and
+redelivers them once the bot is back. Switching back to long polling is just a
+matter of clearing `TELEGRAM_WEBHOOK_URL` — the next start deregisters it.
+
 ## Usage
 
 Once the bot is running and your user ID is whitelisted:
@@ -85,6 +128,7 @@ Once the bot is running and your user ID is whitelisted:
 
 ```
 main.go                          Composition root: config, wiring, handler registration
+serve.go                         Long polling / webhook serving modes
 media/                           Orchestration facade over search + transmission, result cache
 media/interfaces/                Search client interface
 media/clients/internetarchive/   archive.org search client (CC / public domain movies)

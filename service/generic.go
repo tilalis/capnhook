@@ -9,6 +9,16 @@ import (
 	"github.com/tilalis/capnhook/service/paginator"
 )
 
+// Inline keyboard button styles, added in Bot API 9.4. Telegram clients older
+// than February 9, 2026 ignore the field and draw the button in the default
+// color, so a style is decoration only — never the sole signal of what a button
+// does.
+const (
+	stylePrimary = "primary" // blue
+	styleSuccess = "success" // green
+	styleDanger  = "danger"  // red
+)
+
 func sendTorrentsMessage(
 	sender messager,
 	torrentsPaginator *paginator.Paginator[[]interfaces.TorrentSearchResult, interfaces.TorrentSearchResult],
@@ -40,20 +50,28 @@ func sendTorrentsMessage(
 		)
 	}
 
-	resultsLen, pageNumber := torrentsPaginator.Size(), torrentsPaginator.PageNumber()
+	resultsLen, pageNumber, pageSize := torrentsPaginator.Size(), torrentsPaginator.PageNumber(), torrentsPaginator.PageSize()
+
+	// Rounded up, so a trailing short page is still counted.
+	totalPages := (resultsLen + pageSize - 1) / pageSize
+
 	fmt.Fprintf(
 		&responseText,
 		"\n<i>Found %d results. Page %d/%d</i>",
 		resultsLen,
 		pageNumber+1,
-		resultsLen/torrentsPaginator.PageSize(),
+		totalPages,
 	)
 
 	if torrentsPaginator.HasNext() {
 		responseKeyboard = append(
 			responseKeyboard,
 			[]models.InlineKeyboardButton{
-				{Text: "⏩ Next", CallbackData: fmt.Sprintf("page:%d:%s", torrentsPaginator.PageNumber()+1, query)},
+				{
+					Text:         "⏩ Next",
+					Style:        stylePrimary,
+					CallbackData: fmt.Sprintf("page:%d:%s", torrentsPaginator.PageNumber()+1, query),
+				},
 			},
 		)
 	}
@@ -62,7 +80,11 @@ func sendTorrentsMessage(
 		responseKeyboard = append(
 			responseKeyboard,
 			[]models.InlineKeyboardButton{
-				{Text: "⏪ Previous", CallbackData: fmt.Sprintf("page:%d:%s", torrentsPaginator.PageNumber()-1, query)},
+				{
+					Text:         "⏪ Previous",
+					Style:        stylePrimary,
+					CallbackData: fmt.Sprintf("page:%d:%s", torrentsPaginator.PageNumber()-1, query),
+				},
 			},
 		)
 	}
