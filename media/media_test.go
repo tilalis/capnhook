@@ -3,6 +3,7 @@ package media
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"testing"
 	"time"
 
@@ -133,5 +134,68 @@ func TestDownloadTorrentByMagnetDoesNotRename(t *testing.T) {
 	}
 	if len(tr.renames) != 0 {
 		t.Errorf("renames = %+v, want none for magnet adds", tr.renames)
+	}
+}
+
+// hexHash is a syntactically valid info hash; nothing depends on its value.
+const hexHash = "0123456789abcdef0123456789abcdef01234567"
+
+func TestDownloadMagnetAddsTheLinkAsReceived(t *testing.T) {
+	const magnet = "magnet:?xt=urn:btih:" + hexHash +
+		"&dn=Big+Buck+Bunny&tr=udp%3A%2F%2Ftracker.example%3A1337"
+
+	tr := &fakeTransmission{addedName: hexHash}
+	m := New("/plex", fakeSearchClient{}, tr, 0)
+
+	remembered, err := m.RememberMagnet(magnet)
+	if err != nil {
+		t.Fatalf("RememberMagnet: %v", err)
+	}
+
+	torrentName, downloadDir, err := m.DownloadMagnet(context.Background(), remembered.InfoHash, "tvshows")
+	if err != nil {
+		t.Fatalf("DownloadMagnet: %v", err)
+	}
+
+	// The tracker list only survives if the link is passed through untouched
+	// rather than rebuilt from the info hash.
+	if f := tr.addedPayload.Filename; f == nil || *f != magnet {
+		t.Errorf("Filename = %v, want the magnet link exactly as received", f)
+	}
+	if downloadDir != "/plex/TVShows" {
+		t.Errorf("downloadDir = %q, want the TV shows directory", downloadDir)
+	}
+	if torrentName != "Big Buck Bunny" {
+		t.Errorf("torrentName = %q, want the link's display name", torrentName)
+	}
+}
+
+func TestDownloadMagnetWithoutDisplayNameUsesTransmissionsName(t *testing.T) {
+	tr := &fakeTransmission{addedName: "Big Buck Bunny"}
+	m := New("/plex", fakeSearchClient{}, tr, 0)
+
+	remembered, err := m.RememberMagnet("magnet:?xt=urn:btih:" + hexHash)
+	if err != nil {
+		t.Fatalf("RememberMagnet: %v", err)
+	}
+
+	torrentName, _, err := m.DownloadMagnet(context.Background(), remembered.InfoHash, "movies")
+	if err != nil {
+		t.Fatalf("DownloadMagnet: %v", err)
+	}
+
+	if torrentName != tr.addedName {
+		t.Errorf("torrentName = %q, want the name Transmission reported", torrentName)
+	}
+}
+
+// A magnet only reaches Transmission if it is still cached when the user taps
+// a destination, since the button carries the hash alone.
+func TestDownloadMagnetThatWasNeverRemembered(t *testing.T) {
+	m := New("/plex", fakeSearchClient{}, &fakeTransmission{}, 0)
+
+	_, _, err := m.DownloadMagnet(context.Background(), hexHash, "movies")
+	if !errors.Is(err, errUnknownMagnet) {
+		t.Fatalf("DownloadMagnet error = %v, want errUnknownMagnet", err)
 	}
 }

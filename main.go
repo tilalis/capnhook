@@ -92,6 +92,7 @@ func main() {
 	callbackHandlers := map[string]bot.HandlerFunc{
 		"id":            service.ShowTorrentInfoCallbackHandler(mediaService),
 		"download":      service.DownloadTorrentCallbackHandler(mediaService),
+		"magnet":        service.DownloadMagnetCallbackHandler(mediaService),
 		"torrent":       service.ManageTorrentCallbackHandler(mediaService),
 		"page":          service.TorrentsPageCallbackHandler(mediaService),
 		"deletetorrent": service.DeleteTorrentCallbackHandler(mediaService),

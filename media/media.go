@@ -25,6 +25,7 @@ type Media struct {
 	transmission                   transmissionClient
 	findCache                      *sieve.Sieve[string, interfaces.TorrentSearchResult]
 	searchCache                    *sieve.Sieve[string, []interfaces.TorrentSearchResult]
+	magnetCache                    *sieve.Sieve[string, Magnet]
 	rootDir, moviesDir, tvshowsDir string
 	maxSearchResults               int
 }
@@ -52,6 +53,14 @@ type TorrentStatus struct {
 // explicit limit is configured.
 const defaultMaxSearchResults = 30
 
+// A magnet link is parked in the cache between the user sending it and tapping
+// a destination, which normally takes seconds. The TTL only has to outlast a
+// distracted user.
+const (
+	magnetCacheSize = 64
+	magnetCacheTTL  = 30 * time.Minute
+)
+
 func New(root string, s interfaces.SearchClient, tr transmissionClient, maxSearchResults int) *Media {
 	if maxSearchResults <= 0 {
 		maxSearchResults = defaultMaxSearchResults
@@ -62,6 +71,7 @@ func New(root string, s interfaces.SearchClient, tr transmissionClient, maxSearc
 		transmission:     tr,
 		findCache:        sieve.New[string, interfaces.TorrentSearchResult](16, 0),
 		searchCache:      sieve.New[string, []interfaces.TorrentSearchResult](128, time.Minute*5),
+		magnetCache:      sieve.New[string, Magnet](magnetCacheSize, magnetCacheTTL),
 		rootDir:          root,
 		moviesDir:        path.Join(root, "Movies"),
 		tvshowsDir:       path.Join(root, "TVShows"),
@@ -210,16 +220,23 @@ func (m *Media) GetCurrentTorrents(ctx context.Context, inProgress bool) ([]Torr
 	return torrentStatuses, nil
 }
 
-func (m *Media) DownloadTorrent(ctx context.Context, id string, destination string) (torrentName string, downloadDir string, err error) {
+// destinationDir maps the destination keyword carried in callback data to the
+// directory Transmission should download into.
+func (m *Media) destinationDir(destination string) (string, error) {
 	switch destination {
 	case "movies":
-		downloadDir = m.moviesDir
+		return m.moviesDir, nil
 	case "tvshows":
-		downloadDir = m.tvshowsDir
+		return m.tvshowsDir, nil
+	default:
+		return "", fmt.Errorf("wrong destination %s", destination)
 	}
+}
 
-	if downloadDir == "" {
-		return "", "", fmt.Errorf("wrong destination %s", destination)
+func (m *Media) DownloadTorrent(ctx context.Context, id string, destination string) (torrentName string, downloadDir string, err error) {
+	downloadDir, err = m.destinationDir(destination)
+	if err != nil {
+		return "", "", err
 	}
 
 	torrent, err := m.FindTorrent(ctx, id)
@@ -257,6 +274,61 @@ func (m *Media) DownloadTorrent(ctx context.Context, id string, destination stri
 	// and the media library show it.
 	if payload.MetaInfo != nil {
 		m.renameTorrent(ctx, added, torrentName)
+	}
+
+	return torrentName, downloadDir, nil
+}
+
+// errUnknownMagnet is returned once a remembered magnet link has been evicted
+// from the cache and the user taps a destination anyway.
+var errUnknownMagnet = errors.New("this magnet link expired, send it again")
+
+// RememberMagnet parses a magnet link and holds on to it until the user picks
+// a destination. Only the info hash travels in the callback data, so the link
+// itself has to be found again by hash when the button comes back.
+func (m *Media) RememberMagnet(raw string) (Magnet, error) {
+	magnet, err := ParseMagnet(raw)
+	if err != nil {
+		return Magnet{}, err
+	}
+
+	m.magnetCache.Set(magnet.InfoHash, magnet)
+
+	return magnet, nil
+}
+
+// DownloadMagnet hands a previously remembered magnet link to Transmission.
+// Unlike DownloadTorrent there is no search result behind it, so the name can
+// only come from the link's dn parameter or from Transmission itself.
+func (m *Media) DownloadMagnet(ctx context.Context, infoHash, destination string) (torrentName string, downloadDir string, err error) {
+	downloadDir, err = m.destinationDir(destination)
+	if err != nil {
+		return "", "", err
+	}
+
+	magnet, ok := m.magnetCache.Get(infoHash)
+	if !ok {
+		return "", "", errUnknownMagnet
+	}
+
+	added, err := m.transmission.TorrentAdd(ctx, transmissionrpc.TorrentAddPayload{
+		DownloadDir: &downloadDir,
+		Filename:    &magnet.URI,
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("add magnet %s: %w", infoHash, err)
+	}
+
+	// Transmission only learns the real name once it has the metadata, so it
+	// may still be reporting the hash here. The dn parameter is the better
+	// label when the link carries one.
+	switch {
+	case magnet.DisplayName != "":
+		torrentName = magnet.DisplayName
+	case added.Name != nil && *added.Name != "":
+		torrentName = *added.Name
+	default:
+		torrentName = infoHash
 	}
 
 	return torrentName, downloadDir, nil

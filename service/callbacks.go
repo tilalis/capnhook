@@ -44,6 +44,34 @@ func DownloadTorrentCallbackHandler(m *media.Media) bot.HandlerFunc {
 	}
 }
 
+// handles magnet* callbacks
+func DownloadMagnetCallbackHandler(m *media.Media) bot.HandlerFunc {
+	return func(ctx context.Context, bot *bot.Bot, update *models.Update) {
+		sender := &callbackMessageSender{
+			messageSender: messageSender{ctx, bot, update},
+		}
+		infoHash, data, err := sender.parseCallback(3)
+
+		if err != nil {
+			sender.sendError(err)
+			return
+		}
+
+		destination := data[2]
+
+		torrentName, downloadDir, err := m.DownloadMagnet(ctx, infoHash, destination)
+		if err != nil {
+			slog.ErrorContext(ctx, err.Error())
+			sender.sendError(err)
+			return
+		}
+
+		if err := sender.sendMessage(fmt.Sprintf("📥 <i>Downloading %s to %s</i>", torrentName, filepath.Base(downloadDir))); err != nil {
+			slog.ErrorContext(ctx, err.Error())
+		}
+	}
+}
+
 // handles deletetorrent* callbacks
 func DeleteTorrentCallbackHandler(m *media.Media) bot.HandlerFunc {
 	return func(ctx context.Context, bot *bot.Bot, update *models.Update) {

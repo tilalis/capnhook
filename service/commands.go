@@ -21,8 +21,26 @@ func QueryCommand(m *media.Media) bot.HandlerFunc {
 		}
 
 		query := update.Message.Text
-		torrents, err := m.SearchTorrents(ctx, query)
 		sender := &messageSender{ctx, bot, update}
+
+		// A magnet link already identifies a torrent, so searching for it would
+		// be pointless — go straight to asking where it should be downloaded.
+		if media.IsMagnet(query) {
+			magnet, err := m.RememberMagnet(query)
+			if err != nil {
+				slog.ErrorContext(ctx, err.Error())
+				sender.sendError(err)
+				return
+			}
+
+			if err := sendMagnetMessage(sender, magnet); err != nil {
+				slog.ErrorContext(ctx, err.Error())
+			}
+
+			return
+		}
+
+		torrents, err := m.SearchTorrents(ctx, query)
 
 		if err != nil {
 			slog.ErrorContext(ctx, err.Error())

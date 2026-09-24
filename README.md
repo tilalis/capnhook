@@ -8,6 +8,7 @@ Search the [Internet Archive](https://archive.org) from a chat, send torrents to
 
 - 🔎 **Search** the Internet Archive for freely licensed movies by sending any text message
 - 📥 **Download** a result into your `Movies` or `TVShows` folder with one tap
+- 🧲 **Magnet links** are recognised and added directly, skipping the search
 - 📊 **Track** progress, ETA and size of active downloads (`/info`, `/inprogress`)
 - 🗑️ **Delete** a torrent and its files from a chat button
 - 💾 **Check** free disk space (`/space`)
@@ -26,6 +27,9 @@ Typical flow: send a search query → pick a result from the inline keyboard →
 bot shows details with **Download to Movies** / **Download to TVShows** buttons →
 the torrent is added to Transmission with the chosen download directory.
 
+Send a **magnet link** instead of a search query and the search step is skipped:
+the bot reads the info hash out of the link and goes straight to the
+**Download to Movies** / **Download to TVShows** buttons.
 ## Prerequisites
 
 - Go **1.26+**
@@ -119,6 +123,7 @@ Once the bot is running and your user ID is whitelisted:
 | Input                  | Action                                                        |
 | ---------------------- | ------------------------------------------------------------- |
 | _any text_             | Search torrents; results appear as tappable buttons           |
+| _a magnet link_        | Skip the search and offer **Download to Movies / TVShows**    |
 | tap a search result    | Show torrent details + **Download to Movies / TVShows**       |
 | `/info`                | List all torrents in Transmission with manage/delete buttons  |
 | `/inprogress`          | Same as `/info`, but hides completed downloads                |
@@ -130,6 +135,7 @@ Once the bot is running and your user ID is whitelisted:
 main.go                          Composition root: config, wiring, handler registration
 serve.go                         Long polling / webhook serving modes
 media/                           Orchestration facade over search + transmission, result cache
+media/magnet.go                  Magnet link recognition and info hash parsing
 media/interfaces/                Search client interface
 media/clients/internetarchive/   archive.org search client (CC / public domain movies)
 media/clients/apibay/            apibay.org search client
