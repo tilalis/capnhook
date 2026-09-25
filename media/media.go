@@ -36,6 +36,8 @@ type transmissionClient interface {
 	TorrentGetAll(ctx context.Context) ([]transmissionrpc.Torrent, error)
 	TorrentAdd(ctx context.Context, payload transmissionrpc.TorrentAddPayload) (transmissionrpc.Torrent, error)
 	TorrentRenamePath(ctx context.Context, id int64, path, name string) error
+	TorrentStartIDs(ctx context.Context, ids []int64) error
+	TorrentStopIDs(ctx context.Context, ids []int64) error
 	TorrentRemove(ctx context.Context, payload transmissionrpc.TorrentRemovePayload) error
 	FreeSpace(ctx context.Context, path string) (freeSpace, totalSize cunits.Bits, err error)
 }
@@ -47,6 +49,11 @@ type TorrentStatus struct {
 	ETA          time.Duration
 	SizeWhenDone cunits.Bits
 	Done         bool
+
+	// Paused is true while Transmission is holding the torrent stopped. A
+	// finished torrent keeps seeding until it is paused, so this is
+	// independent of Done.
+	Paused bool
 }
 
 // defaultMaxSearchResults caps how many search results are returned when no
@@ -154,10 +161,54 @@ func (m *Media) DeleteCurrentTorrent(ctx context.Context, id string) (string, er
 	return *torrent.Name, nil
 }
 
+// PauseTorrent stops a torrent without removing it or its files, and returns
+// the torrent's name.
+func (m *Media) PauseTorrent(ctx context.Context, id string) (string, error) {
+	return m.setTorrentRunning(ctx, id, false)
+}
+
+// ResumeTorrent starts a paused torrent again, and returns its name.
+func (m *Media) ResumeTorrent(ctx context.Context, id string) (string, error) {
+	return m.setTorrentRunning(ctx, id, true)
+}
+
+// setTorrentRunning is the shared half of PauseTorrent and ResumeTorrent: both
+// have to resolve the torrent first, since the caller only has an id and the
+// reply needs a name.
+func (m *Media) setTorrentRunning(ctx context.Context, id string, running bool) (string, error) {
+	identifier, err := strconv.Atoi(id)
+	if err != nil {
+		return "", fmt.Errorf("invalid torrent id %q: %w", id, err)
+	}
+
+	torrent, err := m.transmission.TorrentGetByID(ctx, int64(identifier))
+	if err != nil {
+		return "", fmt.Errorf("get torrent %d: %w", identifier, err)
+	}
+
+	if torrent.ID == nil || torrent.Name == nil {
+		return "", errBadTransmissionRPCResponse
+	}
+
+	ids := []int64{*torrent.ID}
+
+	if running {
+		err = m.transmission.TorrentStartIDs(ctx, ids)
+	} else {
+		err = m.transmission.TorrentStopIDs(ctx, ids)
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("set torrent %d running to %t: %w", *torrent.ID, running, err)
+	}
+
+	return *torrent.Name, nil
+}
+
 // toTorrentStatus maps a raw Transmission torrent into a TorrentStatus,
 // validating that every field we rely on is present.
 func toTorrentStatus(torrent transmissionrpc.Torrent) (TorrentStatus, error) {
-	if torrent.ID == nil || torrent.Name == nil || torrent.SizeWhenDone == nil || torrent.PercentDone == nil || torrent.ETA == nil {
+	if torrent.ID == nil || torrent.Name == nil || torrent.SizeWhenDone == nil || torrent.PercentDone == nil || torrent.ETA == nil || torrent.Status == nil {
 		return TorrentStatus{}, errBadTransmissionRPCResponse
 	}
 
@@ -173,6 +224,7 @@ func toTorrentStatus(torrent transmissionrpc.Torrent) (TorrentStatus, error) {
 		SizeWhenDone: *torrent.SizeWhenDone,
 		ETA:          eta,
 		Done:         *torrent.PercentDone >= 1.0,
+		Paused:       *torrent.Status == transmissionrpc.TorrentStatusStopped,
 	}, nil
 }
 

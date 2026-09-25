@@ -10,6 +10,7 @@ Search the [Internet Archive](https://archive.org) from a chat, send torrents to
 - 📥 **Download** a result into your `Movies` or `TVShows` folder with one tap
 - 🧲 **Magnet links** are recognised and added directly, skipping the search
 - 📊 **Track** progress, ETA and size of active downloads (`/info`, `/inprogress`)
+- ⏸️ **Pause / resume** a torrent from a chat button, without losing it
 - 🗑️ **Delete** a torrent and its files from a chat button
 - 💾 **Check** free disk space (`/space`)
 - 🔒 **Whitelist** — only approved Telegram user IDs can talk to the bot
@@ -126,6 +127,7 @@ Once the bot is running and your user ID is whitelisted:
 | _a magnet link_        | Skip the search and offer **Download to Movies / TVShows**    |
 | tap a search result    | Show torrent details + **Download to Movies / TVShows**       |
 | `/info`                | List all torrents in Transmission with manage/delete buttons  |
+| tap a torrent there    | **Pause / Resume**, **Notify on progress**, **Delete**        |
 | `/inprogress`          | Same as `/info`, but hides completed downloads                |
 | `/space`               | Show free disk space on the media volume                      |
 

@@ -60,6 +60,18 @@ type fakeTransmission struct {
 	addedName    string
 	addedPayload transmissionrpc.TorrentAddPayload
 	renames      []renameCall
+	started      []int64
+	stopped      []int64
+}
+
+func (f *fakeTransmission) TorrentStartIDs(ctx context.Context, ids []int64) error {
+	f.started = append(f.started, ids...)
+	return nil
+}
+
+func (f *fakeTransmission) TorrentStopIDs(ctx context.Context, ids []int64) error {
+	f.stopped = append(f.stopped, ids...)
+	return nil
 }
 
 func (f *fakeTransmission) TorrentAdd(ctx context.Context, payload transmissionrpc.TorrentAddPayload) (transmissionrpc.Torrent, error) {
@@ -74,7 +86,7 @@ func (f *fakeTransmission) TorrentRenamePath(ctx context.Context, id int64, path
 }
 
 func (f *fakeTransmission) TorrentGetByID(ctx context.Context, id int64) (transmissionrpc.Torrent, error) {
-	return transmissionrpc.Torrent{}, nil
+	return transmissionrpc.Torrent{ID: &id, Name: &f.addedName}, nil
 }
 
 func (f *fakeTransmission) TorrentGetAll(ctx context.Context) ([]transmissionrpc.Torrent, error) {
@@ -197,5 +209,79 @@ func TestDownloadMagnetThatWasNeverRemembered(t *testing.T) {
 	_, _, err := m.DownloadMagnet(context.Background(), hexHash, "movies")
 	if !errors.Is(err, errUnknownMagnet) {
 		t.Fatalf("DownloadMagnet error = %v, want errUnknownMagnet", err)
+	}
+}
+
+func TestPauseAndResumeTorrent(t *testing.T) {
+	tr := &fakeTransmission{addedName: "Big Buck Bunny"}
+	m := New("/plex", fakeSearchClient{}, tr, 0)
+
+	name, err := m.PauseTorrent(context.Background(), "7")
+	if err != nil {
+		t.Fatalf("PauseTorrent: %v", err)
+	}
+	if name != tr.addedName {
+		t.Errorf("PauseTorrent name = %q, want the torrent's name", name)
+	}
+	if len(tr.stopped) != 1 || tr.stopped[0] != 7 {
+		t.Errorf("stopped = %v, want exactly [7]", tr.stopped)
+	}
+	if len(tr.started) != 0 {
+		t.Errorf("started = %v, want none for a pause", tr.started)
+	}
+
+	if _, err := m.ResumeTorrent(context.Background(), "7"); err != nil {
+		t.Fatalf("ResumeTorrent: %v", err)
+	}
+	if len(tr.started) != 1 || tr.started[0] != 7 {
+		t.Errorf("started = %v, want exactly [7]", tr.started)
+	}
+}
+
+func TestPauseTorrentRejectsANonNumericID(t *testing.T) {
+	m := New("/plex", fakeSearchClient{}, &fakeTransmission{}, 0)
+
+	if _, err := m.PauseTorrent(context.Background(), "not-an-id"); err == nil {
+		t.Fatal("PauseTorrent accepted a non-numeric id")
+	}
+}
+
+// Done and Paused are independent: a finished torrent keeps seeding until it
+// is stopped, and the manage screen has to tell those apart.
+func TestToTorrentStatusReadsPausedFromTheStatusField(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     transmissionrpc.TorrentStatus
+		wantPaused bool
+	}{
+		{name: "stopped", status: transmissionrpc.TorrentStatusStopped, wantPaused: true},
+		{name: "downloading", status: transmissionrpc.TorrentStatusDownload, wantPaused: false},
+		{name: "seeding", status: transmissionrpc.TorrentStatusSeed, wantPaused: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			id, name, eta := int64(7), "Big Buck Bunny", int64(0)
+			done, size, status := 1.0, cunits.Bits(0), test.status
+
+			got, err := toTorrentStatus(transmissionrpc.Torrent{
+				ID:           &id,
+				Name:         &name,
+				SizeWhenDone: &size,
+				PercentDone:  &done,
+				ETA:          &eta,
+				Status:       &status,
+			})
+			if err != nil {
+				t.Fatalf("toTorrentStatus: %v", err)
+			}
+
+			if got.Paused != test.wantPaused {
+				t.Errorf("Paused = %t, want %t", got.Paused, test.wantPaused)
+			}
+			if !got.Done {
+				t.Error("Done = false, want a finished torrent to stay done while paused")
+			}
+		})
 	}
 }

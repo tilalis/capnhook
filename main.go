@@ -89,6 +89,7 @@ func main() {
 	}
 
 	trackTorrentCallbackHandler := service.TrackTorrentCallbackHandler(mediaService)
+	pauseTorrentCallbackHandler := service.PauseTorrentCallbackHandler(mediaService)
 	callbackHandlers := map[string]bot.HandlerFunc{
 		"id":            service.ShowTorrentInfoCallbackHandler(mediaService),
 		"download":      service.DownloadTorrentCallbackHandler(mediaService),
@@ -98,6 +99,8 @@ func main() {
 		"deletetorrent": service.DeleteTorrentCallbackHandler(mediaService),
 		"track":         trackTorrentCallbackHandler,
 		"untrack":       trackTorrentCallbackHandler,
+		"pause":         pauseTorrentCallbackHandler,
+		"resume":        pauseTorrentCallbackHandler,
 	}
 	for pattern, handler := range callbackHandlers {
 		b.RegisterHandler(

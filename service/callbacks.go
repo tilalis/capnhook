@@ -72,6 +72,47 @@ func DownloadMagnetCallbackHandler(m *media.Media) bot.HandlerFunc {
 	}
 }
 
+// handles pause* and resume* callbacks
+func PauseTorrentCallbackHandler(m *media.Media) bot.HandlerFunc {
+	return func(ctx context.Context, bot *bot.Bot, update *models.Update) {
+		sender := &callbackMessageSender{
+			messageSender: messageSender{ctx, bot, update},
+		}
+
+		id, data, err := sender.parseCallback(2)
+		if err != nil {
+			slog.ErrorContext(ctx, err.Error())
+			sender.sendError(err)
+			return
+		}
+
+		resume := data[0] == "resume"
+
+		var (
+			torrentName string
+			response    string
+		)
+
+		if resume {
+			torrentName, err = m.ResumeTorrent(ctx, id)
+			response = "▶️ Resumed: %s"
+		} else {
+			torrentName, err = m.PauseTorrent(ctx, id)
+			response = "⏸️ Paused: %s"
+		}
+
+		if err != nil {
+			slog.ErrorContext(ctx, err.Error())
+			sender.sendError(err)
+			return
+		}
+
+		if err := sender.sendMessage(fmt.Sprintf(response, torrentName)); err != nil {
+			slog.ErrorContext(ctx, err.Error())
+		}
+	}
+}
+
 // handles deletetorrent* callbacks
 func DeleteTorrentCallbackHandler(m *media.Media) bot.HandlerFunc {
 	return func(ctx context.Context, bot *bot.Bot, update *models.Update) {
@@ -193,14 +234,35 @@ func ManageTorrentCallbackHandler(m *media.Media) bot.HandlerFunc {
 			return
 		}
 
+		// Nothing else on this screen would say whether the torrent is running.
+		pausedMarker := ""
+		if torrentStatus.Paused {
+			pausedMarker = "⏸️ "
+		}
+
 		description := fmt.Sprintf(
-			"%s <code>(%.0f%%, %s)</code>",
+			"%s%s <code>(%.0f%%, %s)</code>",
+			pausedMarker,
 			torrentStatus.Name,
 			torrentStatus.PercentDone,
 			torrentStatus.SizeWhenDone.GiBString(),
 		)
 
+		pauseButton := models.InlineKeyboardButton{
+			Text:         "⏸️ Pause",
+			Style:        stylePrimary,
+			CallbackData: fmt.Sprintf("pause:%d", torrentStatus.ID),
+		}
+		if torrentStatus.Paused {
+			pauseButton = models.InlineKeyboardButton{
+				Text:         "▶️ Resume",
+				Style:        styleSuccess,
+				CallbackData: fmt.Sprintf("resume:%d", torrentStatus.ID),
+			}
+		}
+
 		inlineKeyboardButtons := [][]models.InlineKeyboardButton{
+			{pauseButton},
 			{{
 				Text:         "🚫 Delete with all files",
 				Style:        styleDanger,

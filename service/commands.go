@@ -70,10 +70,15 @@ func InfoCommand(m *media.Media) bot.HandlerFunc {
 		)
 
 		for i, torrentStatus := range torrentStatuses {
+			// Paused wins over done: a finished torrent that is still seeding
+			// reads differently from one that has been stopped.
 			var status string
-			if torrentStatus.Done {
+			switch {
+			case torrentStatus.Paused:
+				status = "⏸️"
+			case torrentStatus.Done:
 				status = "✅"
-			} else {
+			default:
 				status = "🔄"
 			}
 
